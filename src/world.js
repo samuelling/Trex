@@ -206,6 +206,21 @@ export class World {
     this.prints.setMatrixAt(i, M); this.prints.instanceMatrix.needsUpdate = true; this.prints.geometry.attributes.aAge.setX(i, 0);
   }
 
+  // ---- carcass and the piece torn from it (feeding) ----
+  showCarcass(pos, yaw) {
+    if (!this.carcass) {
+      const g = new THREE.Group(), hide = new THREE.MeshStandardMaterial({ color: 0x3a3226, roughness: 0.9 }), meat = new THREE.MeshStandardMaterial({ color: 0x5a1210, roughness: 0.35 }), bone = new THREE.MeshStandardMaterial({ color: 0xb9ad92, roughness: 0.6 });
+      const lump = (r, sx, sy, sz, m, seed) => { const ge = new THREE.SphereGeometry(r, 28, 18), p = ge.attributes.position, v = new THREE.Vector3(); for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i); const n = 1 + 0.16 * Math.sin(v.x * 5 + seed) * Math.sin(v.z * 4.3 + seed * 2) + 0.1 * Math.sin(v.y * 9 + v.x * 6 + seed); p.setXYZ(i, v.x * n * sx, Math.max(-0.05, v.y * n * sy), v.z * n * sz); } ge.computeVertexNormals(); const me = new THREE.Mesh(ge, m); me.castShadow = me.receiveShadow = true; return me; };
+      const body = lump(1, 1.9, 0.62, 1.0, hide, 1); body.position.set(0.9, 0.05, 0); g.add(body);
+      const hind = lump(0.6, 1.3, 0.7, 0.9, hide, 4); hind.position.set(2.4, 0.05, 0.25); g.add(hind);
+      const open = lump(0.55, 1.2, 0.55, 0.9, meat, 7); open.position.set(0.05, 0.16, 0.05); g.add(open);
+      for (let i = 0; i < 6; i++) { const rib = new THREE.Mesh(new THREE.TorusGeometry(0.42 - 0.02 * i, 0.03, 6, 14, Math.PI * 0.9), bone); rib.position.set(-0.25 + 0.2 * i, 0.12, 0.05); rib.rotation.set(0, Math.PI / 2 + 0.12 * (i - 2.5), 0.25); rib.castShadow = true; g.add(rib); }
+      this.carcass = g; this.scene.add(g);
+      this.chunk = lump(0.2, 1.25, 0.8, 0.9, meat, 11); this.chunk.visible = false; this.scene.add(this.chunk);
+    }
+    this.carcass.position.set(pos.x, groundHeight(pos.x, pos.z), pos.z); this.carcass.rotation.y = -yaw; this.carcass.visible = true;
+  }
+
   // ---- dust kicked up at footfall ----
   #dust() {
     const N = this.nDust = 420, g = new THREE.BufferGeometry();

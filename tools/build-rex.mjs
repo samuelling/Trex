@@ -6,7 +6,7 @@
 import fs from 'fs';
 import zlib from 'zlib';
 import { add, sub, mul, dot, cross, len, norm, lerp, sstep } from './vec.mjs';
-import { bones, prims, landmarks, jawMat } from './anatomy.mjs';
+import { bones, prims, landmarks, jawMat, skelPrims } from './anatomy.mjs';
 import { macro } from './skinfield.mjs';
 import { unwrap } from './unwrap.mjs';
 import { bake, bakeDetail } from './bake.mjs';
@@ -284,6 +284,28 @@ function attributes(M, G, D, list, isJaw) {
   }
   return { nV, pos: M.pos, nrm: M.nrm, tri: M.tri, si, sw, mi, mw, ni, g5, soft, loose, mat, ao, cav, mga, mgb };
 }
+// ---------------- skeleton (node tools/build-rex.mjs skel) ----------------
+// The bones as their own surface, rigidly carried by the same joints as the flesh. Each vertex follows the bone volume it belongs to.
+if (LOD === 'skel') {
+  const SP = skelPrims.map(compile), h = 0.0135, [lo, hi] = bounds(SP, 0.06);
+  const G = new Grid(axis(lo[0], hi[0], [], h, h), axis(Math.max(lo[1], 0), hi[1], [], h, h), symAxis(Math.max(-lo[2], hi[2]), 0, h, h));
+  const D = G.field(); for (const p of SP) if (!p.carve) G.splat(D, p); for (const p of SP) if (p.carve) G.splat(D, p, true); log('skeleton field', G.nx, G.ny, G.nz);
+  const M = finish(G, D, h), nV = M.nV, solid = SP.filter(p => !p.carve), si = new Uint8Array(nV * 4), sw = new Uint8Array(nV * 4), n8 = new Int8Array(nV * 4);
+  for (let i = 0; i < nV; i++) {
+    const x = M.pos[3 * i], y = M.pos[3 * i + 1], z = M.pos[3 * i + 2]; let best = 1e9, bp = null, bt = 0;
+    for (const p of solid) { if (x < p.lo[0] - 0.05 || x > p.hi[0] + 0.05 || y < p.lo[1] - 0.05 || y > p.hi[1] + 0.05 || z < p.lo[2] - 0.05 || z > p.hi[2] + 0.05) continue; const d = p.ev(x, y, z); if (d < best) { best = d; bp = p; bt = OUT_T; } }
+    const w = primBones(bp, bp.tmax ? bt : (bp.L > 1e-6 ? bt : 0)).filter(q => q[1] > 0.004), tot = w.reduce((a, q) => a + q[1], 0); let acc = 0;
+    w.forEach((q, c) => { si[4 * i + c] = q[0]; const v = c === w.length - 1 ? 255 - acc : Math.round(255 * q[1] / tot); sw[4 * i + c] = v; acc += v; });
+    for (let c = 0; c < 3; c++) n8[4 * i + c] = Math.round(127 * M.nrm[3 * i + c]);
+  }
+  const tri = Uint32Array.from(M.tri); for (let i = tri.length - 1; i > 0; i--) tri[i] = (tri[i] - tri[i - 1]) >>> 0;
+  const parts = { position: Float32Array.from(M.pos), normal: n8, skinIndex: si, skinWeight: sw, index: tri }; let off = 0; const layout = {}, bufs = [];
+  for (const [k, a] of Object.entries(parts)) { const pad = (4 - off % 4) % 4; if (pad) { bufs.push(Buffer.alloc(pad)); off += pad; } layout[k] = { offset: off, length: a.length }; bufs.push(Buffer.from(a.buffer, a.byteOffset, a.byteLength)); off += a.byteLength; }
+  const gz = zlib.gzipSync(Buffer.concat(bufs), { level: 9 }); fs.writeFileSync('assets/skeleton.bin.gz', gz);
+  fs.writeFileSync('assets/skeleton.json', JSON.stringify({ vertices: nV, triangles: tri.length / 3, gzBytes: gz.length, indexDelta: true, layout }));
+  log('skeleton', nV, 'verts', tri.length / 3, 'tris', (gz.length / 1e6).toFixed(1) + 'MB gz'); process.exit(0);
+}
+
 const AB = attributes(MB, GB, DB, body, false), AJ = attributes(MJ, GJ, DJ, jawP, true), AS = attributes(MS, GS, DS, body, false); log('attributes');
 
 // ---------------- pin the skin sheet down where a limb meets the trunk ----------------

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { VERT_PARS, VERT_MAIN, FRAG_PARS } from './skinShader.js';
 import { SkinLayer } from './skin.js';
+import { loadSkeleton } from './skeleton.js';
 
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 
@@ -74,6 +75,7 @@ export class Rex {
         .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = rexSkin();')
         .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = rexRough;')
         .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(rexN, 0.0)).xyz); normal = rexPerturb(normal, -vViewPosition, (rexFold - 0.5) * 0.03 * rexComp);')
+        .replace('#include <opaque_fragment>', '#include <opaque_fragment>\nif (uView == 3) { float fr = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.2); gl_FragColor = vec4(vec3(0.55, 0.72, 1.0) * (0.25 + 0.9 * fr), 0.035 + 0.3 * fr); }')
         .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= rexAO; reflectedLight.indirectSpecular *= rexAO * rexAO; reflectedLight.directDiffuse *= mix(1.0, rexAO, 0.35);');
     };
     this.material = mat;
@@ -84,6 +86,16 @@ export class Rex {
     this.#buildEyes(); this.#buildTeeth(); this.#buildGullet();
   }
 
+  // view 0 skin, 1 muscle activation, 2 skin strain, 3 skeleton (flesh drawn as a faint shell)
+  async setView(v) {
+    this.uniforms.uView.value = v; const sk = v === 3;
+    if (sk && !this.bonesMesh) { if (!this._skel) this._skel = loadSkeleton(this); this.bonesMesh = await this._skel; }
+    const on = this.uniforms.uView.value === 3;
+    if (this.bonesMesh) this.bonesMesh.visible = on;
+    const m = this.material; if (m.transparent !== on) { m.transparent = on; m.depthWrite = !on; m.side = on ? THREE.DoubleSide : THREE.FrontSide; m.needsUpdate = true; }
+    this.mesh.castShadow = !on; this.mesh.renderOrder = on ? 5 : 0;
+    for (const e of this.eyes) e.visible = !on; if (this.gullet) this.gullet.visible = !on;
+  }
   bone(n) { return this.byName[n]; }
   // world position of a rest-space point rigidly attached to bone b
   toWorld(b, restPoint, out) { return out.copy(restPoint).sub(b.rest).applyQuaternion(b.obj.quaternion).add(b.obj.position); }
@@ -141,7 +153,7 @@ export class Rex {
     const lm = this.meta.landmarks, o = lm.HL.origin, c = Math.cos(lm.HL.pitch), s = Math.sin(lm.HL.pitch), k = lm.HL.scale;
     const HL = (x, y) => new THREE.Vector3(o[0] + (x * c - y * s) * k, o[1] + (x * s + y * c) * k, 0);
     const m = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), new THREE.MeshStandardMaterial({ color: 0x120405, roughness: 0.6, side: THREE.DoubleSide }));
-    m.scale.set(0.30, 0.16, 0.30); m.position.copy(HL(0.22, -0.36)); m.rotation.z = lm.HL.pitch; this.attach(m, 'head');
+    m.scale.set(0.30, 0.16, 0.30); m.position.copy(HL(0.22, -0.36)); m.rotation.z = lm.HL.pitch; this.attach(m, 'head'); this.gullet = m;
   }
 
   setQuality(detail) { this.uniforms.uDetail.value = detail; }

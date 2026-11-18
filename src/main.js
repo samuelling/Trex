@@ -7,7 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Rex } from './rex.js';
 import { Locomotion } from './gait.js';
-import { Body } from './dynamics.js';
+import { Body, BONE_YIELD } from './dynamics.js';
 import { World } from './world.js';
 import { Sound } from './sound.js';
 import { DofPass } from './dof.js';
@@ -89,20 +89,24 @@ function setCam(i) {
   local(c.tgt, tgtW); controls.target.copy(tgtW); local(o, camera.position); prevTgt.copy(tgtW); controls.enabled = true; controls.update();
 }
 function placeTripod() { // fixed camera beside the path, a little ahead of the animal
-  const a = (loco.S + 13) / loco.R, r = loco.R - 9.5; camera.position.set(r * Math.sin(a), 1.15, -r * Math.cos(a)); controls.enabled = false;
+  const a = Math.atan2(loco.O.x, -loco.O.z) + loco.dirS * 13 / loco.R, r = loco.R - 9.5; camera.position.set(r * Math.sin(a), 1.15, -r * Math.cos(a)); controls.enabled = false;
 }
 
 // ---- UI ----
 const state = { timeScale: 1, view: 0 };
-const VIEWS = ['Skin', 'Muscle activation', 'Skin strain'];
+const VIEWS = ['Skin', 'Muscle activation', 'Skin strain', 'Skeleton'];
 const spd = $('spd'); spd.value = loco.target;
 const showSpd = () => { $('spdO').textContent = (+spd.value).toFixed(2) + ' m/s'; };
 spd.oninput = () => { loco.target = +spd.value; showSpd(); }; showSpd();
 $('bCam').onclick = () => setCam(camI + 1);
-$('bView').onclick = () => { state.view = (state.view + 1) % 3; rex.uniforms.uView.value = state.view; $('bView').textContent = 'View: ' + VIEWS[state.view]; $('bView').classList.toggle('on', state.view > 0); };
+$('bView').onclick = () => { state.view = (state.view + 1) % VIEWS.length; rex.setView(state.view); $('bView').textContent = 'View: ' + VIEWS[state.view]; $('bView').classList.toggle('on', state.view > 0); };
 $('bForce').onclick = () => { forces.visible = !forces.visible; $('bForce').classList.toggle('on', forces.visible); };
 $('bSlow').onclick = () => { state.timeScale = state.timeScale === 1 ? 0.25 : 1; $('bSlow').classList.toggle('on', state.timeScale !== 1); };
 $('bRoar').onclick = () => { body.roar(); sound.roar(); };
+$('bTurn').onclick = () => { loco.turnAround(); };
+$('bFeed').onclick = () => { body.feed(); };
+body.onFeed = (what, pos, yaw) => { if (what === 'carcass') world.showCarcass(pos, yaw); };
+$('aAir').onchange = () => { loco.aerial = $('aAir').checked; $('aAirO').textContent = loco.aerial ? 'on · speeds to 12 m/s' : 'off · what-if beyond the bone-stress limit'; spd.max = loco.aerial ? 12 : 7.5; if (+spd.value > +spd.max) { spd.value = spd.max; } spd.oninput(); };
 $('bSound').onclick = () => { const on = sound.toggle(); $('bSound').classList.toggle('on', on); };
 $('bAdv').onclick = () => { $('adv').classList.toggle('open'); $('bAdv').classList.toggle('on'); };
 $('hudToggle').onclick = () => { const m = $('hud').classList.toggle('min'); $('hudToggle').textContent = m ? '+' : '–'; };
@@ -118,10 +122,10 @@ bind('aDof', v => v.toFixed(1), v => { if (dof) dof.aperture = v; });
 $('aSun').value = world.elev; $('aSunO').textContent = world.elev + '°'; $('aAz').value = world.az; $('aAzO').textContent = world.az + '°';
 $('aQ').onchange = e => { localStorage.setItem('rexQ', e.target.value); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u; };
 if (forces.visible) $('bForce').classList.add('on');
-if (Q.has('view')) { state.view = +Q.get('view'); rex.uniforms.uView.value = state.view; $('bView').textContent = 'View: ' + VIEWS[state.view]; }
+if (Q.has('view')) { state.view = +Q.get('view'); await rex.setView(state.view); $('bView').textContent = 'View: ' + VIEWS[state.view]; }
 if (Q.get('ui') === '0') { $('hud').style.display = $('ctl').style.display = $('load').style.display = 'none'; }
 if (Q.has('mus')) body.musGain = +Q.get('mus'); if (Q.has('flesh')) body.fleshGain = +Q.get('flesh');
-addEventListener('keydown', e => { if (e.key === 'c') setCam(camI + 1); if (e.key === 'r') $('bRoar').click(); if (e.key === ' ') $('bSlow').click(); if (e.key === 'ArrowUp') { spd.value = +spd.value + 0.25; spd.oninput(); } if (e.key === 'ArrowDown') { spd.value = +spd.value - 0.25; spd.oninput(); } });
+addEventListener('keydown', e => { if (e.key === 'c') setCam(camI + 1); if (e.key === 'r') $('bRoar').click(); if (e.key === 't') $('bTurn').click(); if (e.key === 'f') $('bFeed').click(); if (e.key === ' ') $('bSlow').click(); if (e.key === 'ArrowUp') { spd.value = +spd.value + 0.25; spd.oninput(); } if (e.key === 'ArrowDown') { spd.value = +spd.value - 0.25; spd.oninput(); } });
 
 const BAR = [['caudofemoralis', 'cfl'], ['knee extensors', 'kneeExt'], ['hamstrings', 'hamstring'], ['hip flexors', 'hipFlex'], ['gastrocnemius', 'gastroc'], ['tibialis cran.', 'tibCran']];
 $('bars').innerHTML = '<span></span><span style="text-align:center">L</span><span style="text-align:center">R</span>' + BAR.map(([n, k]) => `<span>${n}</span><div class="bar"><i id="m_${k}_L"></i></div><div class="bar"><i id="m_${k}_R"></i></div>`).join('');
@@ -137,8 +141,10 @@ function hud(dt) {
   $('hStride').textContent = moving ? `${p.lambda.toFixed(2)} m · ${(1 / p.T).toFixed(2)} Hz` : '–';
   $('hStep').textContent = moving ? `${(2 / p.T).toFixed(2)} / ${body.tailFv.toFixed(2)} Hz` : '–';
   $('hDuty').textContent = moving ? p.beta.toFixed(2) : '–';
-  let pk = 0; for (let i = 0; i <= 20; i++) pk = Math.max(pk, loco.Fy(i / 20)); $('hGrf').textContent = moving ? `${pk.toFixed(2)} BW · ${(pk * loco.mass * 9.81 / 1000).toFixed(0)} kN` : '0.50 BW · 41 kN';
+  let pk = 0; for (let i = 0; i <= 20; i++) pk = Math.max(pk, loco.Fy(i / 20)); $('hGrf').textContent = moving ? `${pk.toFixed(2)} BW · ${(pk * loco.mass * 9.81 / 1000).toFixed(0)} kN` : `0.50 BW · ${(0.5 * loco.mass * 9.81 / 1000).toFixed(0)} kN`;
   $('hHip').textContent = loco.pos.y.toFixed(2) + ' m';
+  { const pk = Math.max(body.stress.pkFemur, body.stress.pkTibia), sf = BONE_YIELD / Math.max(pk, 1e-3), el = $('hStress'); el.textContent = moving ? `${pk.toFixed(0)} MPa · safety ×${sf.toFixed(1)}` : '–'; el.style.color = moving && sf < 2 ? '#ff6b57' : moving && sf < 3 ? '#f2c14e' : ''; }
+  $('hTurn').textContent = Math.abs(loco.omega) > 0.03 ? `${(Math.abs(loco.omega) * 57.3).toFixed(0)}°/s ${Math.abs(loco.turnErr) > 0.5 ? '· pivoting' : ''}` : '–';
 }
 
 // ---- simulation step ----
@@ -179,6 +185,7 @@ const clock = new THREE.Clock(); let fpsAcc = 0, fpsN = 0;
 function frame() {
   const raw = Math.min(0.05, clock.getDelta()), dt = raw * state.timeScale;
   if (!window.__paused && dt > 1e-4) { const n = Math.max(1, Math.ceil(dt / (1 / 90))); for (let i = 0; i < n; i++) step(dt / n); }
+  if (world.chunk) { world.chunk.visible = body.chunk.on; if (body.chunk.on) world.chunk.position.copy(body.chunk.pos); }
   world.follow(loco.pos); frameCamera(raw); hud(raw); if (dof) { tmp.copy(loco.O).addScaledVector(loco.heading, 1.6).setY(2.6); dof.focus = Math.max(1.5, camera.position.distanceTo(tmp) - 0.6); } grade.uniforms.uT.value = (performance.now() % 1000) / 1000;
   composer.render();
   fpsAcc += raw; fpsN++; if (fpsAcc > 4 && fpsN / fpsAcc < 24 && quality !== 'low' && !Q.has('q') && !window.__warned) { window.__warned = true; const n = $('note'); n.style.display = 'block'; n.textContent = 'Running slowly — try Advanced → Quality → Low'; setTimeout(() => n.style.display = 'none', 7000); }

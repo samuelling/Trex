@@ -11,6 +11,11 @@ const a1 = new V3(), a2 = new V3(), a3 = new V3(), a4 = new V3(), q1 = new Q4(),
 // second-order follower (critically/under-damped spring toward a target)
 class Spring { constructor(w, z) { this.w = w; this.z = z; this.x = 0; this.v = 0; } step(target, dt) { const n = Math.max(1, Math.ceil(dt * this.w / 0.25)), h = dt / n; for (let i = 0; i < n; i++) { this.v += h * (this.w * this.w * (target - this.x) - 2 * this.z * this.w * this.v); this.x += h * this.v; } return this.x; } }
 
+// mid-shaft sections as thick-walled tubes: [area m^2, outer radius m, second moment of area m^4]
+const tube = (R, r) => [Math.PI * (R * R - r * r), R, Math.PI / 4 * (R ** 4 - r ** 4)];
+const FEMUR = tube(0.092, 0.058), TIBIA = tube(0.078, 0.045);
+export const BONE_YIELD = 200;   // MPa, compressive yield of cortical bone
+
 export class Body {
   constructor(rex, loco) {
     this.rex = rex; this.loco = loco; const B = n => rex.bone(n);
@@ -37,6 +42,33 @@ export class Body {
     this.mi = n => rex.musIdx[n];
     this.flesh = new Flesh(rex);
     this.camPos = null;
+    // feeding sequence and bone loading
+    this.feedT = -1; this.feedWait = false; this.onFeed = null; this.chunk = { on: false, pos: new V3(), vel: new V3(), free: false }; this.swallow = 0;
+    this.stress = { femur: 0, tibia: 0, pkFemur: 0, pkTibia: 0 };
+  }
+
+  // Strike and feed (after Snively & Russell 2007: a fast ventral strike driven by the neck, tearing with the neck extended, then
+  // inertial feeding - the head jerks back, the jaws release, and the food is caught further in as the head is thrust forward).
+  feed() { if (this.feedT < 0 && !this.feedWait) { this.feedWait = true; this.loco.hold = true; } }
+  #feed(dt) {
+    const L = this.loco, F = { pitch: 0, drop: 0, gp: 0, gy: 0, jaw: 0, on: 0 };
+    if (this.feedWait && L.speed === 0) { this.feedWait = false; this.feedT = 0; a1.copy(L.O).addScaledVector(L.heading, 4.75); if (this.onFeed) this.onFeed('carcass', a1.clone(), L.psi); }
+    if (this.feedT < 0) { L.posePitch += (0 - L.posePitch) * Math.min(1, dt * 4); L.poseDrop += (0 - L.poseDrop) * Math.min(1, dt * 4); return F; }
+    const t = (this.feedT += dt); F.on = 1;
+    F.pitch = kf(t, [[0, 0], [0.9, -0.36], [1.12, -0.47], [2.5, -0.40], [3.4, 0.03], [3.62, 0.10], [3.95, -0.02], [5.2, 0]]);
+    F.drop = kf(t, [[0, 0], [0.9, 0.42], [1.12, 0.62], [2.5, 0.5], [3.4, 0.05], [5.2, 0]]);
+    F.gp = kf(t, [[0, 0], [0.9, -0.55], [1.12, -1.02], [2.4, -0.80], [3.3, 0.22], [3.5, 0.52], [3.62, 0.66], [3.86, 0.18], [4.3, 0.42], [5.2, 0]]);
+    F.gy = (t > 1.2 && t < 2.45 ? 0.3 * Math.sin((t - 1.2) * 2 * Math.PI * 2.4) * sst(1.2, 1.4, t) * (1 - sst(2.25, 2.45, t)) : 0);
+    F.jaw = kf(t, [[0, 0], [0.5, 30], [1.05, 34], [1.14, 3], [2.4, 2], [3.48, 2], [3.6, 30], [3.84, 34], [3.93, 0], [5.2, 0]]);
+    this.swallow = kf(t, [[3.9, 0], [4.15, 1], [4.9, 1], [5.2, 0]]) * (t > 3.9 ? 1 : 0); this.swallowT = (t - 3.95) / 0.9;
+    L.posePitch = F.pitch; L.poseDrop = F.drop;
+    // the torn-off piece: in the jaws until the toss, then ballistic, gone when the jaws close over it
+    const c = this.chunk;
+    if (t > 2.4 && t < 3.56) { c.on = true; c.free = false; }
+    else if (t >= 3.56 && t < 3.9) { if (!c.free) { c.free = true; c.vel.copy(L.heading).multiplyScalar(-1.5); c.vel.y = 2.6; } c.vel.y -= G * dt; c.pos.addScaledVector(c.vel, dt); }
+    else c.on = false;
+    if (t > 5.2) { this.feedT = -1; L.hold = false; this.swallow = 0; }
+    return F;
   }
 
   roar() { if (this.roarT < 0) this.roarT = 0; }
@@ -46,7 +78,7 @@ export class Body {
     // ---------- dorsal column: counter-rotate so the chest and head stay on heading ----------
     let prev = this.pelvis; const cs = [0.22, 0.45, 0.68, 0.9];
     this.spine.forEach((b, i) => {
-      b.obj.quaternion.copy(qp).multiply(q1.setFromAxisAngle(UP, -d.yaw * cs[i])).multiply(q1.setFromAxisAngle(AX, -(d.roll - Math.atan(L.speed * L.speed / (G * L.R))) * cs[i] * 0.8));
+      b.obj.quaternion.copy(qp).multiply(q1.setFromAxisAngle(UP, -d.yaw * cs[i])).multiply(q1.setFromAxisAngle(AX, -(d.roll - Math.atan(L.speed * L.omega / G)) * cs[i] * 0.8));
       b.obj.position.copy(b.rest).sub(prev.rest).applyQuaternion(prev.obj.quaternion).add(prev.obj.position); prev = b;
     });
     // ---------- head: stabilised gaze, neck interpolates from chest to head ----------
@@ -58,7 +90,10 @@ export class Body {
     }
     // roar: head up and forward, jaws wide
     let roar = 0; if (this.roarT >= 0) { this.roarT += dt; roar = kf(this.roarT, [[0, 0], [0.45, 1], [2.3, 1], [3.1, 0]]); if (this.roarT > 3.1) this.roarT = -1; }
-    const gy = this.gYaw.step(this.gazeYaw * (1 - roar), dt), gp = this.gPitch.step(this.gazePitch * (1 - roar) + roar * 0.42, dt);
+    const FD = this.#feed(dt), look = Math.max(-0.6, Math.min(0.6, L.turnErr * 0.5)) * (1 - FD.on);     // the head leads a turn
+    const calm = (1 - roar) * (1 - FD.on);
+    this.gYaw.w = this.gPitch.w = FD.on ? 16 : 3.2;                                                     // the strike is fast: neck muscles, not a gaze shift
+    const gy = this.gYaw.step(this.gazeYaw * calm + look + FD.gy, dt), gp = this.gPitch.step(this.gazePitch * calm + roar * 0.42 + FD.gp, dt);
     const bob = this.neckBob.step(-d.ay * 0.006, dt);
     const qHead = q2.copy(L.qPath).multiply(q1.setFromAxisAngle(UP, gy)).multiply(q1.setFromAxisAngle(AZ, gp + bob * 0.5 + d.pitch * 0.3)).multiply(q1.setFromAxisAngle(AX, Math.sin(t * 0.37) * 0.03)).clone();
     const chest = this.spine[3].obj.quaternion, ns = [0.22, 0.46, 0.7, 0.9]; prev = this.spine[3];
@@ -70,13 +105,15 @@ export class Body {
     // ---------- jaw + breathing ----------
     this.breathT += dt * (0.22 + 0.25 * L.p.Fr * w + 0.1 * w) * 2 * Math.PI;
     const breath = Math.sin(this.breathT); rex.uniforms.uBreath.value = 0.022 * (0.5 + 0.5 * breath) * (1 + roar);
-    const open = this.jawS.step((0.25 + (0.6 + 1.4 * w * Math.min(1, L.p.Fr * 2.5)) * Math.max(0, breath) + roar * (27 + 1.5 * Math.sin(t * 38))) * DEG, dt);
+    this.jawS.w = FD.on ? 30 : 14;
+    const open = this.jawS.step((0.25 + (0.6 + 1.4 * w * Math.min(1, L.p.Fr * 2.5)) * Math.max(0, breath) * (1 - FD.on) + roar * (27 + 1.5 * Math.sin(t * 38)) + FD.jaw) * DEG, dt);
     this.jawOpen = open;
     this.jaw.obj.quaternion.copy(qHead).multiply(q1.setFromAxisAngle(AZ, -open));
     this.jaw.obj.position.copy(this.jaw.rest).sub(this.head.rest).applyQuaternion(qHead).add(this.head.obj.position);
+    if (this.chunk.on && !this.chunk.free) rex.toWorld(this.head, this.mouthPt || (this.mouthPt = new V3(...rex.meta.landmarks.snout).add(new V3(-0.2, -0.3, 0))), this.chunk.pos);
     // blink
     this.blinkT -= dt; if (this.blinkT < -0.13) this.blinkT = 2 + Math.random() * 6;
-    for (const e of rex.eyes) e.userData.lid.visible = this.blinkT < 0;
+    for (const e of rex.eyes) e.userData.lid.visible = this.blinkT < 0 && e.visible;
     // ---------- arms: small passive swing ----------
     for (const a of this.arms) {
       const sw = a.sp.step(-d.ay * 0.02 + Math.sin(t * 0.6 + a.s) * 0.04 + roar * 0.35, dt);
@@ -110,7 +147,7 @@ export class Body {
   // Muscle excitation from quasi-static inverse dynamics: the external moment of the ground reaction
   // force about each joint is what the corresponding muscle group must resist.
   #muscles(dt, roar) {
-    const L = this.loco, e = this.exc, mi = this.mi, rt = L.right, w = L.walk; e.fill(0.04);
+    const L = this.loco, e = this.exc, mi = this.mi, rt = L.right, w = L.walk; e.fill(0.04); let sF = 0, sT = 0;
     for (const ft of L.feet) {
       const S = ft.S, sp = Math.min(1.6, 0.5 + L.p.Fr * 1.3);
       if (ft.Fy > 0) {
@@ -122,6 +159,11 @@ export class Body {
         e[mi('gastroc_' + S)] += n(ma, 60) + 0.15 * ft.load; e[mi('tibCran_' + S)] += n(-ma, 30) * 0.6; e[mi('digFlex_' + S)] += n(mm, 30);
         e[mi('adductor_' + S)] += 0.3 * ft.load; if (ft.s > 0.85) e[mi('hipFlex_' + S)] += sst(0.85, 1, ft.s) * 0.5 * w;
         ft.moments = [mh, mk, ma, mm];
+        // Bone loading, beam model: axial force = ground force along the shaft + the muscle force balancing the joint moment
+        // (moment / moment arm); bending = the share of the ground force's mid-shaft moment that muscles do not cancel (0.3).
+        const beam = (A, B, mj, arm, sec) => { a2.copy(B).sub(A).normalize(); const fax = Math.abs(ft.F.dot(a2)); a3.copy(A).add(B).multiplyScalar(0.5); const mb = a1.copy(ft.cop).sub(a3).cross(ft.F).length();
+          return ((fax + Math.abs(mj) * 1000 / arm) / sec[0] + 0.3 * mb * sec[1] / sec[2]) / 1e6; };
+        sF = Math.max(sF, beam(ft.Hw, ft.Kw, mk, 0.17, FEMUR)); sT = Math.max(sT, beam(ft.Kw, ft.Aw, ma, 0.15, TIBIA));
       } else {
         const u = ft.u;
         e[mi('hipFlex_' + S)] += kf(u, [[0, 0.55], [0.3, 0.75], [0.6, 0.15], [1, 0]]) * sp * w;
@@ -131,12 +173,13 @@ export class Body {
         ft.moments = null;
       }
     }
+    { const S = this.stress, k = Math.exp(-dt / Math.max(0.6, 1.5 * L.p.T)); S.femur = sF * w; S.tibia = sT * w; S.pkFemur = Math.max(S.pkFemur * k, S.femur); S.pkTibia = Math.max(S.pkTibia * k, S.tibia); }
     // axial: epaxials resist trunk pitch/roll with each step; tail muscles follow tail swing
     const ph = L.phase, d = L.dyn;
     e[mi('epax_R')] += (0.25 + 0.35 * Math.max(0, Math.sin(2 * Math.PI * (ph + 0.1))) + Math.max(0, d.ay) * 0.05) * (0.3 + 0.7 * w);
     e[mi('epax_L')] += (0.25 + 0.35 * Math.max(0, -Math.sin(2 * Math.PI * (ph + 0.1))) + Math.max(0, d.ay) * 0.05) * (0.3 + 0.7 * w);
     const tl = Math.max(-1, Math.min(1, (this.tailLat || 0) * 2.5)); e[mi('tailLat_R')] += 0.15 + 0.5 * Math.max(0, -tl); e[mi('tailLat_L')] += 0.15 + 0.5 * Math.max(0, tl);
-    e[mi('neckDors_R')] += 0.3 + 0.4 * Math.max(0, -this.gYaw.x) + roar * 0.5; e[mi('neckDors_L')] += 0.3 + 0.4 * Math.max(0, this.gYaw.x) + roar * 0.5; e[mi('neckVent')] += 0.1 + roar * 0.6;
+    e[mi('neckDors_R')] += 0.3 + 0.4 * Math.max(0, -this.gYaw.x) + roar * 0.5; e[mi('neckDors_L')] += 0.3 + 0.4 * Math.max(0, this.gYaw.x) + roar * 0.5; e[mi('neckVent')] += 0.1 + roar * 0.6 + (this.feedT >= 0 ? 0.5 : 0); if (this.feedT >= 0) { e[mi('neckDors_R')] += 0.5; e[mi('neckDors_L')] += 0.5; e[mi('jawAdd')] += 0.6; }
     e[mi('jawAdd')] += 0.15 + roar * 0.7; for (const S of ['R', 'L']) { e[mi('pect_' + S)] += 0.1 + roar * 0.3; e[mi('arm_' + S)] += 0.1 + roar * 0.5; }
     // activation dynamics (faster on than off)
     for (let i = 0; i < 32; i++) { const x = Math.min(1, e[i]); this.act[i] += (x - this.act[i]) * Math.min(1, dt / (x > this.act[i] ? 0.07 : 0.14)); }

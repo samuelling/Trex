@@ -20,9 +20,19 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 
 **Soft tissue.** 111 wobbling masses distributed through the belly, thighs, tail base, neck and throat, each tethered to the skeleton by a damped spring and coupled to its neighbours. Nothing drives them except the motion of their anchors, so footfalls and limb accelerations ripple through the flesh. Active muscle is stiffer, so a relaxed swing-leg thigh wobbles more than a loaded one.
 
+**Filled out, not shrink-wrapped.** The soft tissue follows the published arguments for a bulky animal: a tail base swollen by the caudofemoralis (Persons & Currie 2011), thighs and drumsticks sized to the fleshy models of Hutchinson et al. (2011), a deep neck (Snively & Russell 2007), and skull openings, hip bones and shoulder blades buried under muscle and skin rather than showing through. The mesh encloses 11.4 m³, about 9.5 t at a whole-body density of 0.83.
+
+**Running, and what it would cost.** The speed slider runs to 7.5 m/s as a grounded run: duty factor is held at 0.5, so one foot is always down. A beam model estimates peak femur and tibia stress each stride from the ground force along the shaft, the muscle force needed to balance the joint moment, and the part of the bending moment that muscles do not cancel. *Allow aerial run* (Advanced) lifts the duty-factor limit and extends the slider to 12 m/s; peak ground force climbs from 1.7 to about 2.5 body weights and estimated bone stress from roughly 35 to 90 MPa, taking the safety factor against yield (200 MPa) from about 6 down toward 2 — the pattern behind Sellers et al.'s (2017) conclusion that the animal was limited to walking gaits.
+
+**Turning.** The animal steers by integrating its heading; *Turn round* reverses its direction on the circuit. Yaw acceleration is capped near 1.2 rad/s² (yaw inertia of order 3×10⁴ kg m², a few tens of kN m from the hip muscles through a planted leg) and yaw rate near 0.5 rad/s, so a reversal is a pivot of several seconds at a shuffle, with the head leading. Tyrannosaurids were about twice as agile as other giant theropods of the same mass (Snively et al. 2019), but still slow in absolute terms.
+
+**Strike and feed.** *Strike & feed* stops the animal, drops the trunk and neck in a fast ventral strike onto a carcass, tears with lateral head shakes, then lifts and feeds inertially — the head jerks back, the jaws release the piece and close over it further in — followed by a swallow. The sequence illustrates the behaviours Snively & Russell (2007) found the neck muscles capable of; the timings are illustrative, not fitted.
+
+**Skeleton.** The *Skeleton* view strips the animal to its bones — skull with its openings, 10 cervical, 13 dorsal, 5 sacral and 40 caudal vertebrae with spines and chevrons, ribs and gastralia, pelvis, limbs and digits — carried by the same joints and the same simulation, with the flesh as a faint outline.
+
 **Skin.** The hide is its own simulated layer rather than paint on the muscle. A 10,900-vertex sheet covers the body and is solved every frame with position-based dynamics: each point is tied to the fascia underneath by a spring whose stiffness depends on how loose the skin is there (tight over the skull, shins and limb folds; loose on the throat, belly and flanks), it can lift off but not sink in, its edges resist stretch but go slack in compression, and gravity acts on it. So the skin lags and slides over the moving muscle, the dewlap and belly hang and sway, and where the sheet is compressed — inside of a bending neck, behind the thigh — the shader raises wrinkles from the measured strain, while stretched skin smooths out.
 
-**Surface detail.** `tools/build-rex.mjs` unwraps the body into a texture atlas and bakes 4K maps (2K on the light tier) from a procedural 3D skin field: scale tessellation that changes by region, wrinkle networks that follow the direction each joint folds, scutes on the feet, scars, mud, countershaded colour. Folds deeper than a few millimetres are pushed into the geometry itself; finer relief is a normal map, baked in the rest pose and rotated per pixel with the skin as it deforms. A tiling micro-detail layer keeps scales crisp in close-up.
+**Surface detail.** `tools/build-rex.mjs` unwraps the body into a texture atlas and bakes 4K maps (2K on the light tier) from a procedural 3D skin field: fine pebbly scales (kept small, after the 1–2.5 mm scales of the known skin patches; Bell et al. 2017), wrinkle networks that follow the direction each joint folds, scutes on the feet, scars, mud, countershaded colour. Folds deeper than a few millimetres are pushed into the geometry itself; finer relief is a normal map, baked in the rest pose and rotated per pixel with the skin as it deforms. A tiling micro-detail layer keeps scales crisp in close-up.
 
 **Head.** Gaze is stabilised against the body's pitch, roll and yaw, with slow gaze shifts. The mouth has lips covering the teeth (Cullen et al. 2023); they show when it opens.
 
@@ -32,12 +42,14 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 |---|---|
 | Speed | 0–7.5 m/s. At zero the animal finishes its step and stands. |
 | Camera | Seven views including a fixed tripod; drag to orbit, pinch/scroll to zoom. |
-| View | Skin · muscle activation heat-map · skin strain (stretch and compression of the simulated hide). |
+| View | Skin · muscle activation heat-map · skin strain (stretch and compression of the simulated hide) · skeleton. |
+| Turn round | Pivot and walk the circuit the other way. |
+| Strike & feed | Stop, strike at a carcass, tear, toss and swallow. |
 | Forces | Ground reaction force vectors, centre of mass and its trajectory. |
 | ¼× time | Slow motion. |
-| Advanced | Muscle definition, soft-tissue wobble, skin looseness, tail natural frequency, depth of field, sun position, quality. |
+| Advanced | Muscle definition, soft-tissue wobble, allow aerial run, skin looseness, tail natural frequency, depth of field, sun position, quality. |
 
-Keys: `c` camera, `space` slow motion, `r` roar, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low&dof=1&sun=19&az=20`.
+Keys: `c` camera, `space` slow motion, `r` roar, `t` turn round, `f` strike and feed, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low&dof=1&sun=19&az=20`.
 
 Quality tiers: **high** loads the 386k-triangle mesh with 4K textures (about 20 MB) and is meant for a desktop GPU; **medium** and **low** use a 180k-triangle mesh with 2K textures (about 8 MB); low also drops depth of field and bloom. Phones start on low.
 
@@ -47,7 +59,10 @@ Quality tiers: **high** loads the 386k-triangle mesh with 4K textures (about 20 
 - Soft tissue is a coarse lattice, not a finite-element solid. Wobble and muscle bulge are drawn at 1.5× by default so they read at a distance; set both to 1.0× in Advanced for the literal values.
 - The skin sheet is coarse (about 7.5 cm between points) and is pinned where limbs meet the trunk, so fine sliding there is not captured. Wrinkles are shaded, not geometric.
 - Skin colour and pattern are invented. Scale size is exaggerated relative to the few known skin impressions.
-- Mass for force read-outs is 8.4 t; the mesh volume would give ~8.3–9.3 t depending on assumed density.
+- Mass for force read-outs is 9.5 t (mesh volume 11.4 m³ at density 0.83); published estimates for this specimen run from about 8.4 to 9.5 t, with fleshier models higher.
+- Bone stress is a beam estimate with fixed moment arms and a fixed share (0.3) of uncancelled bending; trust the trend with speed and duty factor, not the absolute number.
+- Integument is scaly throughout, the majority reading of the skin patches; a sparse dorsal covering of filaments cannot be excluded and is not modelled.
+- The skeleton is built from simple volumes: proportions and counts are right, individual bone shapes are schematic.
 - The plants are a loose nod to the Hell Creek flora. The setting is a real-time scene with one sun, a shadow map and image-based sky light — not a path-traced render.
 
 ## Layout
@@ -60,6 +75,7 @@ src/dynamics.js      spine, head, muscles, soft-tissue lattice
 src/skin.js          simulated skin sheet (slide, sag, strain)
 src/terrain.js       ground relief shared by the renderer and the gait
 src/dof.js           depth-of-field pass
+src/skeleton.js      loader for the skeleton view
 src/tail.js          elastic-beam tail
 src/rex.js           mesh, skeleton, eyes, teeth
 src/skinShader.js    integument + deformation shader
@@ -70,11 +86,30 @@ tools/skinfield.mjs  procedural 3D skin relief and colour
 tools/unwrap.mjs     texture-atlas unwrap and packing
 tools/bake.mjs       texture baking
 tools/shot.mjs       headless screenshot harness used for verification
+tools/export.mjs     dumps one simulated instant (deformed animal + scene) for offline rendering
+tools/render_cycles.py  path-traced stills of an export with Blender's Cycles (pip install bpy)
 assets/              built meshes (gzip) and baked textures (WebP)
 vendor/              three.js r170 (MIT)
 ```
 
+## Offline path-traced stills
+
+The real-time view uses one shadow-mapped sun and image-based sky light. For stills, the same instant can be path traced:
+
+```
+node tools/export.mjs out/pose 9 -0.3 1.3            # sim seconds, gaze yaw, speed
+HEIGHT_OUT=out/height.png node --max-old-space-size=6500 tools/build-rex.mjs hi 4096   # also writes the fine-relief height map
+python tools/render_cycles.py out/pose assets out/height.png out/rex --views side,rear,hero,legs --res 1600x900 --samples 72 --haze 0.003 --sun 15
+```
+
+The exporter evaluates the full deformation chain on the CPU (skinning, muscle bulge, soft-tissue lattice, simulated skin) so the offline mesh is exactly the animal the app draws. Cycles then supplies physical sun and sky, soft shadows, bounce light, subsurface scattering in the skin, refraction in the eyes and the standing water, haze, and a real lens aperture. Not included: motion blur (one instant is exported) and hair-fine geometric wrinkles.
+
 ## Sources
+
+- Bell PR et al. (2017) Tyrannosauroid integument reveals conflicting patterns of gigantism and feather evolution. *Biol Lett* 13:20170092.
+- Persons WS, Currie PJ (2011) The tail of *Tyrannosaurus*: reassessing the size and locomotive importance of the M. caudofemoralis in non-avian theropods. *Anat Rec* 294:119–131.
+- Snively E, Russell AP (2007) Craniocervical feeding dynamics of *Tyrannosaurus rex*. *Paleobiology* 33:610–638.
+- Snively E et al. (2019) Lower rotational inertia and larger leg muscles indicate more rapid turns in tyrannosaurids than in other large theropods. *PeerJ* 7:e6432.
 
 - Alexander RM (1976) Estimates of speeds of dinosaurs. *Nature* 261:129–130.
 - Alexander RM, Jayes AS (1980) Fourier analysis of forces exerted in walking and running. *J Biomech* 13:383–390.

@@ -64,23 +64,23 @@ export function height(S) {
   const ad = S.x * S.dx + S.y * S.dy + S.z * S.dz, k1 = 1.1, f1 = 15, qx = (S.x + S.dx * ad * k1) * f1, qy = (S.y + S.dy * ad * k1) * f1, qz = (S.z + S.dz * ad * k1) * f1;
   const wz = (fbm(S.x * 3 + 5, S.y * 3, S.z * 3, 2) - 0.5) * 1.2;
   voro(qx + wz, qy - wz, qz + wz, 3); const g1 = 1 - sst(0.0, 0.14, V.f2 - V.f1), id1 = V.id;
-  const f2 = 41; voro((S.x + S.dx * ad * 0.6) * f2, (S.y + S.dy * ad * 0.6) * f2, (S.z + S.dz * ad * 0.6) * f2, 9); const g2 = 1 - sst(0.0, 0.16, V.f2 - V.f1);
+  const f2 = 70; voro((S.x + S.dx * ad * 0.6) * f2, (S.y + S.dy * ad * 0.6) * f2, (S.z + S.dz * ad * 0.6) * f2, 9); const g2 = 1 - sst(0.0, 0.16, V.f2 - V.f1);
   const bodyW = skin * (1 - 0.6 * S.rHead) * (1 - S.rFoot) * (1 - 0.7 * S.rMt);
-  h -= (0.0026 * g1 * (0.45 + 0.55 * L) + 0.0011 * g2) * bodyW;
+  h -= (0.0019 * g1 * (0.45 + 0.55 * L) + 0.0006 * g2) * bodyW;
   // feature scales on the face and lips, scutes down the shin and across the toes
   const scut = clamp01(S.rMt + S.rFoot + 0.6 * S.rShank * sst(1.3, 0.9, S.y)) * skin, face = S.rHead * skin;
   let top = 0, sid = id1;
-  if (face > 0.02) { voro(S.x * 43, S.y * 43, S.z * 43, 21); const e = V.f2 - V.f1; top = sst(0.03, 0.26, e); sid = V.id; h += 0.0017 * (top - 0.6) * face; }
+  if (face > 0.02) { voro(S.x * 62, S.y * 62, S.z * 62, 21); const e = V.f2 - V.f1; top = sst(0.03, 0.26, e); sid = V.id; h += 0.0015 * (top - 0.6) * face; }
   if (scut > 0.02) { const ks = 0.9; voro((S.x + S.dx * ad * ks) * 34, (S.y + S.dy * ad * ks) * 34, (S.z + S.dz * ad * ks) * 34, 31); const e = V.f2 - V.f1, tp = sst(0.03, 0.22, e); h += 0.0024 * (tp - 0.6) * scut; if (scut > face) { top = tp; sid = V.id; } }
   // medium body scales (the finest relief lives in the tiling detail map applied in the shader)
-  voro(S.x * 78, S.y * 78, S.z * 78, 41); const ms = sst(0.03, 0.3, V.f2 - V.f1); h += 0.0007 * (ms - 0.6) * bodyW;
+  voro(S.x * 150, S.y * 150, S.z * 150, 41); const ms = sst(0.03, 0.3, V.f2 - V.f1); h += 0.00035 * (ms - 0.6) * bodyW;
   const sc = scar(S) * skin; h += 0.0022 * sc;
   // keratin striations, pad pebbles, palate ridges, tongue papillae
   if (S.mKer > 0.01) h += S.mKer * (vnoise(S.x * 260 * (1 - Math.abs(S.dx)) + ad * 9, S.y * 260 * (1 - Math.abs(S.dy)), S.z * 260 * (1 - Math.abs(S.dz))) - 0.5) * 0.0011;
   if (S.mPad > 0.01) { voro(S.x * 55, S.y * 55, S.z * 55, 51); h += S.mPad * 0.0022 * (sst(0.02, 0.3, V.f2 - V.f1) - 0.5); }
   if (S.mMouth > 0.01) h += S.mMouth * (0.0022 * Math.cos(6.2832 * S.a / 0.034) * sst(-0.2, 0.3, S.ny * -1) + (fbm(S.x * 60, S.y * 60, S.z * 60, 2) - 0.5) * 0.0012);
   if (S.mTongue > 0.01) { voro(S.x * 140, S.y * 140, S.z * 140, 61); h += S.mTongue * 0.0009 * (1 - V.f1); }
-  R.fold = hm; R.groove = clamp01(g1 * (0.45 + 0.55 * L) + 0.4 * g2) * bodyW; R.scaleId = sid; R.scaleTop = top; R.scar = sc; R.fine = ms;
+  R.fold = hm; R.groove = clamp01(g1 * (0.45 + 0.55 * L) + 0.25 * g2) * bodyW; R.scaleId = sid; R.scaleTop = top; R.scar = sc; R.fine = ms;
   return h;
 }
 
@@ -105,7 +105,7 @@ export function shade(S, out) {
   const tint = 0.86 + 0.28 * R.scaleId; r *= tint; g *= tint * (0.985 + 0.03 * R.scaleId); b *= tint;
   const spk = sst(0.66, 0.74, p30) * (1 - dk) * 0.35; r *= 1 - spk; g *= 1 - spk; b *= 1 - spk;
   // grooves hold dirt; scars heal pale and pink
-  const gr = R.groove; r *= 1 - 0.42 * gr; g *= 1 - 0.45 * gr; b *= 1 - 0.48 * gr;
+  const gr = R.groove; r *= 1 - 0.24 * gr; g *= 1 - 0.26 * gr; b *= 1 - 0.28 * gr;
   const fold = clamp01(-R.fold / 0.006); r *= 1 - 0.25 * fold; g *= 1 - 0.27 * fold; b *= 1 - 0.3 * fold;
   r = mix(r, 0.30, R.scar * 0.5); g = mix(g, 0.215, R.scar * 0.5); b = mix(b, 0.185, R.scar * 0.5);
   let rough = 0.66 - 0.12 * R.scaleTop + 0.16 * gr + 0.08 * fold + 0.06 * (p30 - 0.5);

@@ -4,7 +4,7 @@
 //   <prefix>-normal.webp   object-space normal of the resting body, with all relief folded in
 //   <prefix>-orm.webp      R occlusion x cavity, G roughness, B fold height (drives tension wrinkles)
 import { createRequire } from 'module';
-import { height, shade, R as HR } from './skinfield.mjs';
+import { height, shade, macro, R as HR } from './skinfield.mjs';
 import { hash3 } from './noise.mjs';
 
 async function loadSharp() { try { return (await import('sharp')).default; } catch { return createRequire('/opt/npm-tools/node_modules/')('sharp'); } }
@@ -22,7 +22,7 @@ export async function bake({ prefix, res, pos0, nrm0, look, K, FIELDS, xref, uv,
       if (m >= 0) owner[y * res + x] = t; else if (m > -0.35 && owner[y * res + x] < 0) owner[y * res + x] = -2 - t;   // near miss: provisional, keeps seams watertight
     }
   }
-  const alb = new Uint8Array(N * 3), nor = new Uint8Array(N * 3), orm = new Uint8Array(N * 3), mask = new Uint8Array(N);
+  const alb = new Uint8Array(N * 3), nor = new Uint8Array(N * 3), orm = new Uint8Array(N * 3), mask = new Uint8Array(N); const hgt = process.env.HEIGHT_OUT ? new Float32Array(N) : null;
   const S = {}, S1 = {}, out = {}; let cnt = 0; const t0 = Date.now();
   for (let i = 0; i < N; i++) {
     let t = owner[i]; if (t === -1) continue; if (t < -1) t = -2 - t;
@@ -46,11 +46,16 @@ export async function bake({ prefix, res, pos0, nrm0, look, K, FIELDS, xref, uv,
     const o = 3 * i; nor[o] = Math.round(127.5 + 127.5 * mx / l); nor[o + 1] = Math.round(127.5 + 127.5 * my / l); nor[o + 2] = Math.round(127.5 + 127.5 * mz / l);
     alb[o] = Math.round(255 * lin2srgb(out.r)); alb[o + 1] = Math.round(255 * lin2srgb(out.g)); alb[o + 2] = Math.round(255 * lin2srgb(out.b));
     orm[o] = Math.round(255 * Math.min(1, S.ao * (0.35 + 0.65 * out.cav))); orm[o + 1] = Math.round(255 * out.rough); orm[o + 2] = Math.round(255 * out.fold);
+    if (hgt) hgt[i] = h0 - macro(S);
     mask[i] = 1; cnt++;
   }
   log(`baked ${cnt} texels (${(100 * cnt / N).toFixed(0)}% of atlas) in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   // dilate chart borders so filtering and mip-mapping never pull in empty texels
   let front = mask.slice();
+  if (hgt) { let f2 = mask.slice(); for (let pass = 0; pass < 12; pass++) { const nx = f2.slice(); for (let y = 0; y < res; y++) for (let x = 0; x < res; x++) { const i = y * res + x; if (f2[i]) continue; let n = 0, a = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= res || yy >= res) continue; const j = yy * res + xx; if (f2[j]) { n++; a += hgt[j]; } } if (n) { hgt[i] = a / n; nx[i] = 1; } } f2 = nx; }
+    // fine relief only (what is not already in the geometry), metres: 16-bit, 0.5 = zero, full scale = 40 mm. For offline rendering.
+    const u16 = new Uint16Array(N); let lo = 1e9, hi = -1e9; for (let i = 0; i < N; i++) { const h = hgt[i]; if (mask[i]) { if (h < lo) lo = h; if (h > hi) hi = h; } u16[i] = Math.round(65535 * Math.min(1, Math.max(0, 0.5 + h / 0.04))); }
+    await sharp(Buffer.from(u16.buffer), { raw: { width: res, height: res, channels: 1, depth: 'ushort' } }).toColourspace('grey16').png({ compressionLevel: 6 }).toFile(process.env.HEIGHT_OUT); log('height map', (lo * 1000).toFixed(2), 'to', (hi * 1000).toFixed(2), 'mm'); }
   for (let pass = 0; pass < 12; pass++) {
     const next = front.slice();
     for (let y = 0; y < res; y++) for (let x = 0; x < res; x++) { const i = y * res + x; if (front[i]) continue; let n = 0, r = [0, 0, 0, 0, 0, 0, 0, 0, 0];

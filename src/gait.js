@@ -32,7 +32,7 @@ function frameQuat(dir, hint, out) {
 export class Locomotion {
   constructor(rex) {
     this.rex = rex; const lm = rex.meta.landmarks;
-    this.mass = 8400; this.R = 38; this.S = 0; this.phase = 0.12; this.speed = 0; this.target = 1.3; this.time = 0;
+    this.mass = 9500; this.R = 38; this.S = 0; this.phase = 0.12; this.speed = 0; this.target = 1.3; this.time = 0;
     this.comOff = new V3(0.55, -0.18, 0);          // whole-body COM relative to the hip centre (rest frame)
     this.dvpp = 0.9; this.kg2 = 5.8;                // virtual pivot height above COM (m); pitch radius of gyration^2
     this.legLen = 3.06;
@@ -40,11 +40,14 @@ export class Locomotion {
     this.pos = new V3(); this.quat = new Q4(); this.heading = new V3(1, 0, 0); this.right = new V3(0, 0, 1); this.qPath = new Q4();
     this.com = new V3(); this.dyn = { dx: 0, dy: 0, dz: 0, pitch: 0, yaw: 0, roll: 0, ay: 0 };
     this.onFootfall = null; this.walk = 0; this.drop = 0; this.gY = 0;
+    // steering: the animal follows the circle in direction dirS; heading changes are limited in rate and acceleration (see #steer)
+    this.O = new V3(0, 0, -this.R); this.psi = 0; this.dirS = 1; this.omega = 0; this.kappa = 1 / this.R; this.turnMax = 0.5; this.turnAcc = 1.2; this.turnErr = 0; this.turnSign = 1;
+    this.aerial = false; this.hold = false; this.posePitch = 0; this.poseDrop = 0;      // hold: stand still (feeding); pose*: extra trunk pitch and crouch
     this.feet = [-1, 1].map((s, i) => this.#mkFoot(s, i ? 'R' : 'L', i * 0.5, lm));
     this.coef = {}; for (const k of ['y', 'x', 'z', 'p']) this.coef[k] = { a: new Float32Array(NH + 1), b: new Float32Array(NH + 1) };
     this.tab = { ay: new Float32Array(NT), ax: new Float32Array(NT), zc: new Float32Array(NT) };
     this.p = this.gaitParams(0.3);
-    this.#frame(this.S); this.#initFeet();
+    this.#pose(); this.#initFeet();
   }
 
   #mkFoot(s, S, off, lm) {
@@ -66,7 +69,9 @@ export class Locomotion {
   // ---------- gait parameters from speed ----------
   gaitParams(v) {
     const h = this.legLen, ve = Math.max(v, 0.3), Fr = ve * ve / (G * h);
-    const beta = Math.max(0.5, 0.47 + 0.25 * Math.exp(-Fr / 0.5));   // no aerial phase: bone-stress limits (Sellers et al. 2017)
+    // duty factor: avian trend, continuing downward past Fr = 1 the way running birds do. By default it is held at 0.5 so there is no
+    // aerial phase (bone-stress limits, Sellers et al. 2017); 'aerial' lifts that limit to show what a true run would cost.
+    const beta = Math.max(this.aerial ? 0.3 : 0.5, 0.47 + 0.25 * Math.exp(-Fr / 0.5) - 0.087 * Math.log(Math.max(1, Fr)));
     let lambda = 2.6 * h * Math.pow(Fr, 0.3);
     const Ls = Math.min(beta * lambda, 2.45); lambda = Ls / beta;
     const T = lambda / ve, run = sst(0.45, 0.95, Fr);
@@ -106,12 +111,31 @@ export class Locomotion {
   #eval(c, ph) { let v = 0; for (let n = 1; n <= NH; n++) { const a = 2 * Math.PI * n * ph; v += c.a[n] * Math.cos(a) + c.b[n] * Math.sin(a); } return v; }
   #acc(tab, ph) { const x = frac(ph) * NT, i = Math.floor(x), f = x - i; return tab[i] * (1 - f) + tab[(i + 1) % NT] * f; }
 
-  // ---------- path: a circle of radius R, animal's right side toward the centre ----------
-  #frame(S, O = this.O || (this.O = new V3()), T = this.heading, Rt = this.right) {
-    const a = S / this.R; O.set(this.R * Math.sin(a), 0, -this.R * Math.cos(a)); T.set(Math.cos(a), 0, Math.sin(a)); Rt.set(-Math.sin(a), 0, Math.cos(a)); return -a;
+  // ---------- path ----------
+  // Heading psi (about the vertical) and position O are integrated; by default the animal tracks a circle of radius R with its
+  // right side toward the centre (dirS = +1) or, after turning round, its left (dirS = -1).
+  #pose() { const a = this.psi; this.heading.set(Math.cos(a), 0, Math.sin(a)); this.right.set(-Math.sin(a), 0, Math.cos(a)); return -a; }
+  // where the body frame will be after travelling ds along the current arc (constant curvature)
+  #ahead(ds, O, T, Rt) {
+    const k = this.kappa, a0 = this.psi, a = a0 + k * ds;
+    if (Math.abs(k) < 1e-4) O.set(this.O.x + Math.cos(a0) * ds, 0, this.O.z + Math.sin(a0) * ds);
+    else O.set(this.O.x + (Math.sin(a) - Math.sin(a0)) / k, 0, this.O.z - (Math.cos(a) - Math.cos(a0)) / k);
+    T.set(Math.cos(a), 0, Math.sin(a)); Rt.set(-Math.sin(a), 0, Math.cos(a)); return -a;
   }
-  #touchdown(ft, S, out) {
-    const O = t1, T = t2, Rt = t3, yaw = this.#frame(S, O, T, Rt), p = this.p;
+  // Turning. Yaw inertia of a ~9 t tyrannosaur is of order 3e4 kg m^2 and the hip muscles can put a few tens of kN m about the
+  // vertical through a planted leg, so angular acceleration is of order 1 rad/s^2; the rate is further held to what a planted foot
+  // can absorb as twist during one stance. A reversal is therefore a pivot of several seconds at a slow walk, not a spin.
+  turnAround() { this.dirS = -this.dirS; this.turnSign = -this.dirS; }
+  #steer(dt) {
+    const a = Math.atan2(this.O.x, -this.O.z), e = Math.hypot(this.O.x, this.O.z) - this.R;
+    const des = a + (this.dirS > 0 ? 0 : Math.PI) + this.dirS * Math.atan(e / 5);
+    let err = Math.atan2(Math.sin(des - this.psi), Math.cos(des - this.psi)); if (Math.abs(err) > 2.6) err = Math.abs(err) * this.turnSign;   // a reversal pivots away from the centre
+    this.turnErr = err;
+    const cmd = Math.max(-this.turnMax, Math.min(this.turnMax, 2.2 * err)), dw = this.turnAcc * dt;
+    this.omega += Math.max(-dw, Math.min(dw, cmd - this.omega));
+  }
+  #touchdown(ft, ds, out) {
+    const O = t1, T = t2, Rt = t3, yaw = this.#ahead(ds, O, T, Rt), p = this.p;
     out.copy(O).addScaledVector(T, p.atd + 0.337).addScaledVector(Rt, ft.s * p.w); out.y = groundHeight(out.x, out.z) + 0.085;
     return yaw + ft.s * -2 * DEG;
   }
@@ -119,12 +143,12 @@ export class Locomotion {
     this.#tables();
     for (const ft of this.feet) {
       const pf = frac(this.phase - ft.off), p = this.p;
-      const Std = this.S - (pf < p.beta ? pf : pf - 1) * p.lambda;      // arc position of the COM at this foot's (last or next) touchdown
+      const Std = -(pf < p.beta ? pf : pf - 1) * p.lambda;              // arc distance to the COM position at this foot's (last or next) touchdown
       ft.plant.yaw = this.#touchdown(ft, Std, ft.plant.T); ft.stance = pf < p.beta;
       if (!ft.stance) { ft.liftYaw = this.#touchdown(ft, Std - p.lambda, ft.lift); }
       ft.prevT.copy(ft.plant.T);
     }
-    this.#frame(this.S);
+    this.#pose();
   }
 
   // ---------- main update ----------
@@ -133,22 +157,26 @@ export class Locomotion {
     this.time += dt;
     // speed control; when asked to stop, finish the step into double support first
     const p0 = this.p, pfL = frac(this.phase), inDS = (pfL > 0.03 && pfL < p0.beta - 0.5 - 0.03) || (pfL > 0.53 && pfL < p0.beta - 0.03);
-    let tgt = this.target; if (tgt < 0.05 && this.speed > 0 && !(inDS && this.speed <= 0.36)) tgt = 0.35;
+    this.#steer(dt); const pivot = Math.abs(this.turnErr) > 0.5;
+    let tgt = this.hold ? 0 : this.target; if (pivot && !this.hold) tgt = Math.min(Math.max(tgt, 0.55), 0.6);                      // slow to a shuffle to pivot, even from a stand
+    if (tgt < 0.05 && this.speed > 0 && !(inDS && this.speed <= 0.36)) tgt = 0.35;
     const acc = (tgt < 0.05 ? 1.2 : 0.55) * dt; this.speed += Math.min(acc, Math.max(-acc * 1.6, tgt - this.speed));
     if (this.speed < 0.004) this.speed = 0;
     const v = this.speed, p = this.p = this.gaitParams(v); this.walk = sst(0.02, 0.32, v);
     this.#tables();
     this.phase = frac(this.phase + (v > 0 ? dt / p.T * (v / p.v) : 0)); this.S += v * dt;
+    if (v > 0) { const am = this.psi + 0.5 * this.omega * dt; this.O.x += Math.cos(am) * v * dt; this.O.z += Math.sin(am) * v * dt; this.psi += this.omega * dt; }
+    this.kappa = v > 0.05 ? Math.max(-2.5, Math.min(2.5, this.omega / v)) : 0;
     const ph = this.phase, w = this.walk, d = this.dyn;
     d.dy = this.#eval(this.coef.y, ph) * w; d.dx = this.#eval(this.coef.x, ph) * w; d.dz = this.#eval(this.coef.z, ph) * w; d.pitch = this.#eval(this.coef.p, ph) * w;
     d.ay = this.#acc(this.tab.ay, ph) * G * w;
     d.yaw = -(5.5 - 2 * p.run) * DEG * Math.cos(2 * Math.PI * ph) * w;          // pelvic rotation: swing-side hip forward
-    d.roll = 1.6 * DEG * Math.sin(2 * Math.PI * (ph - 0.08)) * w + Math.atan(v * v / (G * this.R));
-    const yaw = this.#frame(this.S);
+    d.roll = 1.6 * DEG * Math.sin(2 * Math.PI * (ph - 0.08)) * w + Math.atan(v * this.omega / G);
+    const yaw = this.#pose();
     this.qPath.setFromAxisAngle(UP, yaw);
-    this.com.copy(this.O).addScaledVector(this.heading, d.dx).addScaledVector(this.right, d.dz); this.gY += (groundHeight(this.com.x, this.com.z) - this.gY) * Math.min(1, dt * 2.5); this.com.y = p.hip + this.comOff.y + d.dy + this.gY;
+    this.com.copy(this.O).addScaledVector(this.heading, d.dx).addScaledVector(this.right, d.dz); this.gY += (groundHeight(this.com.x, this.com.z) - this.gY) * Math.min(1, dt * 2.5); this.com.y = p.hip + this.comOff.y + d.dy + this.gY - this.poseDrop;
     const q = this.quat.copy(this.qPath);
-    q.multiply(t1q.setFromAxisAngle(UP, d.yaw)).multiply(t1q.setFromAxisAngle(AZ, d.pitch)).multiply(t1q.setFromAxisAngle(AX, d.roll));
+    q.multiply(t1q.setFromAxisAngle(UP, d.yaw)).multiply(t1q.setFromAxisAngle(AZ, d.pitch + this.posePitch)).multiply(t1q.setFromAxisAngle(AX, d.roll));
     this.pos.copy(this.comOff).applyQuaternion(q).negate().add(this.com);
 
     // ---- feet: state machine and kinematic targets ----
@@ -165,7 +193,7 @@ export class Locomotion {
       } else {
         if (wasStance) { ft.lift.copy(ft.Tw); ft.liftYaw = ft.yaw; }
         ft.u = (pf - p.beta) / (1 - p.beta); ft.s = 1; ft.Fy = 0;
-        const tRem = (1 - ft.u) * (1 - p.beta) * p.T; ft.tgtYaw = this.#touchdown(ft, this.S + v * tRem, ft.tgt);
+        const tRem = (1 - ft.u) * (1 - p.beta) * p.T; ft.tgtYaw = this.#touchdown(ft, v * tRem, ft.tgt);
         const e = ft.u * ft.u * ft.u * (ft.u * (ft.u * 6 - 15) + 10);
         ft.Tw.lerpVectors(ft.lift, ft.tgt, e); ft.Tw.y += p.clear * Math.pow(Math.sin(Math.PI * Math.pow(ft.u, 0.85)), 1.3) * w;
         ft.yaw = ft.liftYaw + (ft.tgtYaw - ft.liftYaw) * e;

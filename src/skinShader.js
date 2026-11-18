@@ -66,7 +66,7 @@ vec3 rexSkin() {
   vec3 nr = texture2D(tNormal, vTex).xyz * 2.0 - 1.0;
   // micro-scales: one tiling tile, projected along the three axes of the resting body
   vec3 bw = pow(abs(n0), vec3(4.0)); bw /= bw.x + bw.y + bw.z;
-  float head = smoothstep(3.55, 3.9, vRest.x), f = mix(4.2, 2.3, head);
+  float head = smoothstep(3.55, 3.9, vRest.x), f = mix(8.0, 5.0, head);
   vec3 ax = texture2D(tDetail, vRest.zy * f).xyz, ay = texture2D(tDetail, vRest.xz * f).xyz, az = texture2D(tDetail, vRest.xy * f).xyz;
   vec3 pert = bw.x * vec3(0.0, ax.y * 2.0 - 1.0, ax.x * 2.0 - 1.0) + bw.y * vec3(ay.x * 2.0 - 1.0, 0.0, ay.y * 2.0 - 1.0) + bw.z * vec3(az.x * 2.0 - 1.0, az.y * 2.0 - 1.0, 0.0);
   float dh = bw.x * ax.z + bw.y * ay.z + bw.z * az.z;
