@@ -1,0 +1,10 @@
+{
+  "name": "trex",
+  "private": true,
+  "type": "module",
+  "description": "Tyrannosaurus rex: real-time locomotion and soft-tissue simulation",
+  "scripts": {
+    "build": "node --max-old-space-size=6500 tools/build-rex.mjs hi && node --max-old-space-size=6500 tools/build-rex.mjs lo",
+    "serve": "python3 -m http.server 8080"
+  }
+}

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0c0d0c">
+<title>Tyrannosaurus rex — locomotion &amp; soft-tissue simulation</title>
+<style>
+  :root { --fg: #ece7dc; --dim: #a9a393; --acc: #e0a34a; --glass: rgba(14, 15, 13, .62); --line: rgba(236, 231, 220, .14); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c0d0c; color: var(--fg); font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; touch-action: none; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+  .panel { position: fixed; background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 12px; }
+  #hud { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); padding: 10px 12px; width: min(262px, 70vw); }
+  #hud h1 { margin: 0 0 1px; font: italic 600 15px/1.2 Georgia, "Times New Roman", serif; letter-spacing: .2px; }
+  #hud .sub { color: var(--dim); font-size: 11px; margin-bottom: 7px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+  .row span:first-child { color: var(--dim); white-space: nowrap; } .row b { font-weight: 600; white-space: nowrap; text-align: right; }
+  .bars { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: grid; grid-template-columns: auto 1fr 1fr; gap: 3px 6px; align-items: center; font-size: 11px; color: var(--dim); }
+  .bar { height: 5px; background: rgba(255, 255, 255, .09); border-radius: 3px; overflow: hidden; } .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #c8742a, #f3d06a); }
+  #hudToggle { position: absolute; right: 6px; top: 5px; width: 26px; height: 26px; border: 0; background: none; color: var(--dim); font-size: 16px; }
+  #hud.min .body { display: none; } #hud.min { width: auto; padding-right: 38px; }
+  #ctl { left: 50%; transform: translateX(-50%); bottom: max(10px, env(safe-area-inset-bottom)); width: min(680px, calc(100vw - 20px)); padding: 10px 12px; }
+  .speed { display: flex; align-items: center; gap: 10px; } .speed label { color: var(--dim); white-space: nowrap; } .speed output { min-width: 96px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; height: 26px; background: none; margin: 0; min-width: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .22); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .22); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: var(--acc); border: 2px solid #1a1712; }
+  input[type=range]::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: var(--acc); border: 2px solid #1a1712; }
+  .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  button.b { flex: 1 1 auto; min-height: 38px; padding: 6px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, .06); color: var(--fg); font: inherit; }
+  button.b.on { background: rgba(224, 163, 74, .22); border-color: rgba(224, 163, 74, .6); } button.b:active { background: rgba(255, 255, 255, .16); }
+  #adv { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; }
+  #adv.open { display: grid; } #adv label { color: var(--dim); } #adv output { font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+  #adv select { grid-column: 2 / 4; background: rgba(255, 255, 255, .08); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 6px; font: inherit; }
+  #load { position: fixed; inset: 0; display: grid; place-items: center; background: #0c0d0c; z-index: 9; transition: opacity .8s; } #load.done { opacity: 0; pointer-events: none; }
+  #load div { text-align: center; } #load h2 { font: italic 600 22px Georgia, serif; margin: 0 0 12px; } #load .p { width: 220px; height: 3px; background: rgba(255, 255, 255, .12); border-radius: 2px; overflow: hidden; margin: 0 auto 10px; } #load .p i { display: block; height: 100%; width: 0; background: var(--acc); transition: width .2s; } #load small { color: var(--dim); }
+  #note { position: fixed; right: max(10px, env(safe-area-inset-right)); top: max(10px, env(safe-area-inset-top)); padding: 7px 10px; font-size: 11px; color: var(--dim); max-width: 40vw; text-align: right; display: none; }
+  @media (max-width: 560px) { #hud { font-size: 11.5px; } .bars { font-size: 10.5px; } button.b { padding: 6px 6px; font-size: 12px; } }
+  @media (max-height: 460px) { #hud .bars { display: none; } #ctl { padding: 6px 10px; } .btns { margin-top: 4px; } button.b { min-height: 30px; padding: 3px 8px; } input[type=range] { height: 22px; } }
+</style>
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
+</head>
+<body>
+<div id="load"><div><h2>Tyrannosaurus rex</h2><div class="p"><i id="lp"></i></div><small id="lt">building the animal…</small></div></div>
+<div id="hud" class="panel">
+  <button id="hudToggle" aria-label="toggle readout">–</button>
+  <h1>Tyrannosaurus rex</h1>
+  <div class="body">
+    <div class="sub">adult · 12.2 m · <span id="hMass">8.4</span> t</div>
+    <div class="row"><span>speed</span><b id="hSpeed">–</b></div>
+    <div class="row"><span>Froude no.</span><b id="hFr">–</b></div>
+    <div class="row"><span>gait</span><b id="hGait">–</b></div>
+    <div class="row"><span>stride</span><b id="hStride">–</b></div>
+    <div class="row"><span>step / tail f₀</span><b id="hStep">–</b></div>
+    <div class="row"><span>duty factor</span><b id="hDuty">–</b></div>
+    <div class="row"><span>peak leg force</span><b id="hGrf">–</b></div>
+    <div class="row"><span>hip height</span><b id="hHip">–</b></div>
+    <div class="bars" id="bars"></div>
+  </div>
+</div>
+<div id="note" class="panel"></div>
+<div id="ctl" class="panel">
+  <div class="speed"><label for="spd">Speed</label><input id="spd" type="range" min="0" max="7.5" step="0.05" value="1.3"><output id="spdO">1.30 m/s</output></div>
+  <div class="btns">
+    <button class="b" id="bCam">Camera: Three-quarter</button>
+    <button class="b" id="bView">View: Skin</button>
+    <button class="b" id="bForce">Forces</button>
+    <button class="b" id="bSlow">¼× time</button>
+    <button class="b" id="bRoar">Roar</button>
+    <button class="b" id="bSound">Sound</button>
+    <button class="b" id="bAdv">Advanced</button>
+  </div>
+  <div id="adv">
+    <label>Muscle definition</label><input id="aMus" type="range" min="0" max="4" step="0.1" value="1.5"><output id="aMusO">1.5×</output>
+    <label>Soft-tissue wobble</label><input id="aFlesh" type="range" min="0" max="5" step="0.1" value="1.5"><output id="aFleshO">1.5×</output>
+    <label>Tail natural freq.</label><input id="aTail" type="range" min="0.3" max="1.2" step="0.01" value="0.66"><output id="aTailO">0.66</output>
+    <label>Sun elevation</label><input id="aSun" type="range" min="3" max="75" step="1" value="24"><output id="aSunO">24°</output>
+    <label>Sun azimuth</label><input id="aAz" type="range" min="0" max="360" step="1" value="62"><output id="aAzO">62°</output>
+    <label>Quality</label><select id="aQ"><option value="high">High (detailed mesh, 4× MSAA)</option><option value="med">Medium</option><option value="low">Low (phones)</option></select>
+  </div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

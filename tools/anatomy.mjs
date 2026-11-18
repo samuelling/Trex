@@ -1,0 +1,290 @@
+// Tyrannosaurus rex anatomical definition (adult, FMNH PR 2081 "Sue"-scale).
+// Units: metres. X = cranial (forward), Y = dorsal (up), Z = animal's right.
+// The body is defined the way it is built in life: a skeleton, with muscle
+// bellies and soft-tissue volumes laid over it. Each volume is an implicit
+// primitive attached to one or more bones; the skin is the smooth union.
+import { add, sub, mul, norm, lerp, sstep } from './vec.mjs';
+
+export const bones = [];
+export const prims = [];
+export const landmarks = {};
+const B = (name, parent, p) => { bones.push({ name, parent, p }); return p; };
+
+// ---------- primitive helpers ----------
+const R2 = r => (typeof r === 'number' ? [r, r] : r);
+const base = o => ({ up: o.up || [0, 1, 0], n: o.n || 2, k: o.k ?? 0.07, bones: o.bones, wt: o.wt || null, tfix: o.tfix ?? null,
+  grp: o.grp || 'C', mus: o.mus || null, soft: o.soft || 0, f: o.f || 3, mat: o.mat || 0, carve: !!o.carve, nodeOff: o.nodeOff || null });
+// tapered elliptic capsule a->b; radii [rw (across), rh (along 'up')]
+function cap(a, b, ra, rb, o = {}) {
+  prims.push({ type: 'cap', a, b, ra: R2(ra), rb: R2(rb), rm: o.rm ? R2(o.rm) : null, capA: o.capA ?? null, capB: o.capB ?? null, axis: o.axis || null, ...base(o) });
+}
+// ellipsoid at c with radii [axial, rh, rw] in the frame (axis, up)
+function ell(c, r, o = {}) { cap(c, c, [r[2], r[1]], [r[2], r[1]], { ...o, capA: r[0], capB: r[0], axis: o.axis || [1, 0, 0] }); }
+// smooth chain through stations {p, r:[rw,rh], b}: one continuous tube (no bulges at joints)
+function chain(st, o = {}) { prims.push({ type: 'chain', st: st.map(q => ({ p: q.p, r: R2(q.r), b: q.b })), ...base({ ...o, bones: st.map(q => q.b) }) }); }
+// arbitrary implicit volume
+function custom(fn, lo, hi, o = {}) { prims.push({ type: 'custom', fn, lo, hi, ...base(o) }); }
+const sides = f => { f(1, 'R'); f(-1, 'L'); };
+const Z = (p, s) => [p[0], p[1], p[2] * s];
+// smooth curve through control points [[x, y], ...] (Catmull-Rom, clamped ends)
+export function curve(pts) {
+  const n = pts.length;
+  return x => {
+    if (x <= pts[0][0]) return pts[0][1]; if (x >= pts[n - 1][0]) return pts[n - 1][1];
+    let i = 0; while (x > pts[i + 1][0]) i++;
+    const x0 = pts[i][0], x1 = pts[i + 1][0], y0 = pts[i][1], y1 = pts[i + 1][1], h = x1 - x0, t = (x - x0) / h;
+    const m0 = i > 0 ? (y1 - pts[i - 1][1]) / (x1 - pts[i - 1][0]) : (y1 - y0) / h, m1 = i < n - 2 ? (pts[i + 2][1] - y0) / (pts[i + 2][0] - x0) : (y1 - y0) / h;
+    const t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * y0 + (t3 - 2 * t2 + t) * h * m0 + (-2 * t3 + 3 * t2) * y1 + (t3 - t2) * h * m1;
+  };
+}
+
+// ================= AXIAL SKELETON =================
+B('pelvis', null, [0, 3.06, 0]);
+B('dors1', 'pelvis', [0.45, 3.32, 0]);
+B('dors2', 'dors1', [1.05, 3.38, 0]);
+B('dors3', 'dors2', [1.65, 3.40, 0]);
+B('dors4', 'dors3', [2.25, 3.37, 0]);
+B('neck1', 'dors4', [2.78, 3.38, 0]);
+B('neck2', 'neck1', [3.06, 3.52, 0]);
+B('neck3', 'neck2', [3.31, 3.69, 0]);
+B('neck4', 'neck3', [3.56, 3.84, 0]);
+const HEAD = B('head', 'neck4', [3.82, 3.96, 0]);
+const HP = -9 * Math.PI / 180, hc = Math.cos(HP), hs = Math.sin(HP);
+const HSC = 1.05; // skull length ~1.52 m
+// head-local (origin at occipital condyle, x along skull) -> world rest
+const HL = (x, y, z) => { x *= HSC; y *= HSC; z *= HSC; return [HEAD[0] + x * hc - y * hs, HEAD[1] + x * hs + y * hc, z]; };
+const HLd = (x, y, z) => [x * hc - y * hs, x * hs + y * hc, z];
+const toHL = (x, y, z) => { const dx = x - HEAD[0], dy = y - HEAD[1]; return [(dx * hc + dy * hs) / HSC, (-dx * hs + dy * hc) / HSC, z / HSC]; };
+B('jaw', 'head', HL(0.05, -0.33, 0));
+landmarks.headPitch = HP;
+
+const tailX = [-0.55, -1.1, -1.65, -2.2, -2.75, -3.3, -3.85, -4.4, -4.95, -5.5, -6.05, -6.5, -6.92];
+const tailY = [3.30, 3.26, 3.21, 3.16, 3.12, 3.09, 3.07, 3.06, 3.06, 3.07, 3.09, 3.11, 3.13];
+for (let i = 0; i < 12; i++) B('tail' + (i + 1), i ? 'tail' + i : 'pelvis', [tailX[i], tailY[i], 0]);
+landmarks.tailTip = [tailX[12], tailY[12], 0];
+
+// ================= TORSO =================
+// rib cage + gastral basket; widest and deepest just ahead of the knees
+chain([
+  { p: [-0.75, 3.00, 0], r: [0.36, 0.60], b: 'tail1' },
+  { p: [-0.30, 2.96, 0], r: [0.41, 0.64], b: 'pelvis' },
+  { p: [0.15, 2.88, 0], r: [0.46, 0.70], b: 'pelvis' },
+  { p: [0.70, 2.78, 0], r: [0.57, 0.78], b: 'dors1' },
+  { p: [1.30, 2.76, 0], r: [0.70, 0.80], b: 'dors2' },
+  { p: [1.90, 2.82, 0], r: [0.68, 0.75], b: 'dors3' },
+  { p: [2.45, 2.94, 0], r: [0.57, 0.66], b: 'dors4' },
+  { p: [2.86, 3.10, 0], r: [0.48, 0.58], b: 'neck1' },
+], { k: 0.12, soft: 0.8, f: 1.9, nodeOff: [0, -0.34, 0] });
+// neural spines / ilium crest
+chain([{ p: [-0.9, 3.48, 0], r: [0.13, 0.14], b: 'tail1' }, { p: [0, 3.55, 0], r: [0.14, 0.14], b: 'pelvis' }, { p: [0.75, 3.57, 0], r: [0.14, 0.13], b: 'dors1' },
+  { p: [1.6, 3.57, 0], r: [0.14, 0.13], b: 'dors3' }, { p: [2.7, 3.52, 0], r: [0.15, 0.13], b: 'neck1' }], { k: 0.1 });
+sides((s, S) => {
+  // epaxial muscles (longissimus / iliocostalis)
+  chain([{ p: [0.4, 3.42, 0.20 * s], r: 0.16, b: 'dors1' }, { p: [1.1, 3.45, 0.25 * s], r: 0.18, b: 'dors2' }, { p: [1.9, 3.45, 0.25 * s], r: 0.18, b: 'dors3' }, { p: [2.75, 3.40, 0.21 * s], r: 0.17, b: 'neck1' }],
+    { mus: 'epax_' + S, k: 0.09, soft: 0.3, f: 3.2 });
+  // pectoral / coracoid mass and shoulder
+  ell([2.50, 2.60, 0.30 * s], [0.30, 0.24, 0.20], { bones: ['dors4'], mus: 'pect_' + S, k: 0.1, soft: 0.5, f: 2.8 });
+  ell([2.62, 2.86, 0.44 * s], [0.24, 0.26, 0.12], { bones: ['dors4'], mus: 'pect_' + S, k: 0.09, soft: 0.35, f: 3 });
+});
+// pubis + boot, ischium
+cap([0.12, 2.6, 0], [0.40, 2.02, 0], [0.11, 0.15], [0.10, 0.13], { bones: ['pelvis'], up: [1, 0, 0], k: 0.1 });
+ell([0.40, 1.985, 0], [0.26, 0.085, 0.085], { bones: ['pelvis'], k: 0.07 });
+cap([-0.2, 2.7, 0], [-0.86, 2.36, 0], [0.11, 0.13], [0.07, 0.08], { bones: ['pelvis'], k: 0.1 });
+
+// ================= NECK =================
+const neck = [
+  { p: [2.86, 3.12, 0], r: [0.48, 0.58], b: 'neck1' },
+  { p: [3.10, 3.38, 0], r: [0.43, 0.53], b: 'neck2' },
+  { p: [3.34, 3.60, 0], r: [0.40, 0.49], b: 'neck3' },
+  { p: [3.58, 3.76, 0], r: [0.385, 0.46], b: 'neck4' },
+  { p: [3.84, 3.84, 0], r: [0.38, 0.44], b: 'head' },
+  { p: [4.02, 3.86, 0], r: [0.37, 0.42], b: 'head' },
+];
+chain(neck, { k: 0.1, soft: 0.25, f: 3.4 });
+sides((s, S) => {
+  chain(neck.slice(0, 5).map((q, i) => ({ p: [q.p[0] - 0.10, q.p[1] + 0.26 - 0.01 * i, 0.16 * s], r: 0.21 - 0.012 * i, b: q.b })), { k: 0.08, mus: 'neckDors_' + S, soft: 0.2, f: 3.6 });
+});
+// throat / ventral neck (longus colli, trachea, loose skin)
+chain([{ p: [2.70, 2.62, 0], r: [0.28, 0.20], b: 'dors4' }, { p: [3.16, 2.96, 0], r: [0.26, 0.18], b: 'neck2' }, { p: [3.55, 3.24, 0], r: [0.24, 0.16], b: 'neck3' }, { p: [3.90, 3.40, 0], r: [0.24, 0.14], b: 'head' }],
+  { k: 0.1, mus: 'neckVent', soft: 0.7, f: 2.4 });
+
+// ================= TAIL =================
+const tcy = [3.02, 3.03, 3.04, 3.04, 3.04, 3.04, 3.04, 3.04, 3.045, 3.055, 3.075, 3.10, 3.125];
+const trw = [0.46, 0.42, 0.37, 0.32, 0.27, 0.225, 0.185, 0.15, 0.12, 0.09, 0.065, 0.042, 0.014];
+const trh = [0.66, 0.61, 0.55, 0.48, 0.41, 0.34, 0.275, 0.22, 0.17, 0.13, 0.09, 0.055, 0.018];
+const tb = i => (i < 12 ? 'tail' + (i + 1) : 'tail12');
+landmarks.tailR = { rw: trw, rh: trh };
+const tst = (f) => tailX.map((x, i) => f(x, i)).filter(Boolean);
+chain(tst((x, i) => ({ p: [x, tcy[i], 0], r: [trw[i] * 0.66, trh[i]], b: tb(i) })), { k: 0.08, soft: 0.25, f: 3.2 });
+sides((s, S) => {
+  // epaxial (m. longissimus caudae) high
+  chain(tst((x, i) => ({ p: [x, tcy[i] + 0.42 * trh[i], 0.42 * trw[i] * s], r: 0.5 * trw[i], b: tb(i) })), { k: 0.06, mus: 'tailLat_' + S, soft: 0.25, f: 3.4 });
+  // caudofemoralis longus low on the proximal tail, ilio-ischiocaudalis beyond
+  chain(tst((x, i) => i <= 5 && ({ p: [x, tcy[i] - 0.36 * trh[i], 0.46 * trw[i] * s], r: 0.64 * trw[i], b: tb(i) })), { k: 0.06, mus: 'cfl_' + S, soft: 0.55, f: 2.7 });
+  chain(tst((x, i) => i >= 5 && ({ p: [x, tcy[i] - 0.36 * trh[i], 0.46 * trw[i] * s], r: 0.64 * trw[i], b: tb(i) })), { k: 0.04, mus: 'tailLat_' + S, soft: 0.15, f: 3.4 });
+});
+
+// ================= HIND LIMB =================
+const LEG = { H: [0, 3.06, 0.30], K: [0.66, 1.917, 0.50], A: [0.25, 0.789, 0.47], M: [0.423, 0.142, 0.45] };
+landmarks.leg = LEG;
+const DIG = {
+  d2: [[0.47, 0.10, 0.39], [0.664, 0.085, 0.287], [0.841, 0.068, 0.193], [0.97, 0.028, 0.125]],
+  d3: [[0.50, 0.10, 0.45], [0.76, 0.085, 0.45], [0.99, 0.068, 0.45], [1.16, 0.028, 0.45]],
+  d4: [[0.47, 0.10, 0.51], [0.661, 0.085, 0.62], [0.851, 0.068, 0.73], [0.965, 0.028, 0.795]],
+};
+landmarks.digits = DIG;
+sides((s, S) => {
+  const g = S, P = p => Z(p, s);
+  const { H, K, A, M } = LEG;
+  const fe = 'femur_' + S, ti = 'tibia_' + S, mt = 'mt_' + S;
+  B(fe, 'pelvis', P(H)); B(ti, fe, P(K)); B(mt, ti, P(A));
+  for (const d of ['d2', 'd3', 'd4']) { B(d + 'a_' + S, mt, P(DIG[d][0])); B(d + 'b_' + S, d + 'a_' + S, P(DIG[d][1])); }
+  const sag = [1, 0, 0];
+  // --- thigh ---
+  cap(P(H), P(K), 0.20, 0.17, { grp: g, bones: [fe], k: 0.08 });
+  ell(P([0.0, 3.08, 0.46]), [0.38, 0.30, 0.18], { grp: g, bones: ['pelvis', fe], tfix: 0.4, k: 0.1, soft: 0.4, f: 3.2, mus: 'hipFlex_' + S });
+  // triceps femoris: iliotibialis 1-3 + femorotibialis -> knee extensors
+  cap(P([0.52, 3.40, 0.40]), P([0.74, 1.99, 0.53]), [0.22, 0.33], [0.13, 0.16], { grp: g, up: sag, bones: ['pelvis', fe, ti], wt: [0.4, 0.86], mus: 'kneeExt_' + S, k: 0.07, soft: 0.5, f: 3.1 });
+  cap(P([0.04, 3.44, 0.42]), P([0.69, 2.01, 0.55]), [0.21, 0.37], [0.125, 0.15], { grp: g, up: sag, bones: ['pelvis', fe, ti], wt: [0.4, 0.86], mus: 'kneeExt_' + S, k: 0.07, soft: 0.55, f: 3.0 });
+  cap(P([0.14, 2.84, 0.41]), P([0.70, 2.03, 0.52]), 0.24, 0.15, { grp: g, bones: [fe], mus: 'kneeExt_' + S, k: 0.08, soft: 0.45, f: 3.3 });
+  // iliofibularis + flexor tibialis: hip extensors / knee flexors
+  cap(P([-0.55, 3.34, 0.38]), P([0.50, 1.80, 0.54]), [0.20, 0.33], [0.10, 0.12], { grp: g, up: sag, bones: ['pelvis', fe, ti], wt: [0.4, 0.86], mus: 'hamstring_' + S, k: 0.07, soft: 0.55, f: 3.0 });
+  cap(P([-0.72, 2.78, 0.22]), P([0.42, 1.77, 0.46]), 0.18, 0.09, { grp: g, bones: ['pelvis', fe, ti], wt: [0.35, 0.86], mus: 'hamstring_' + S, k: 0.08, soft: 0.5, f: 3.0 });
+  // iliotrochantericus / puboischiofemoralis internus: hip flexors
+  cap(P([0.62, 3.38, 0.36]), P([0.22, 2.74, 0.46]), 0.22, 0.16, { grp: g, bones: ['pelvis', fe], mus: 'hipFlex_' + S, k: 0.08, soft: 0.4, f: 3.3 });
+  // adductors
+  cap(P([-0.45, 2.6, 0.14]), P([0.5, 2.1, 0.41]), 0.17, 0.10, { grp: g, bones: ['pelvis', fe], mus: 'adductor_' + S, k: 0.08, soft: 0.5, f: 3.0 });
+  // caudofemoralis longus: tail base -> 4th trochanter (the main femoral retractor)
+  cap(P([-0.62, 2.84, 0.27]), P([0.20, 2.66, 0.41]), 0.29, 0.17, { grp: g, bones: ['tail1', 'pelvis', fe], wt: [0.3, 0.6], mus: 'cfl_' + S, k: 0.1, soft: 0.55, f: 2.7 });
+  // --- knee, shank ---
+  ell(P(K), [0.17, 0.18, 0.175], { grp: g, bones: [fe, ti], tfix: 0.5, k: 0.06 });
+  cap(P(K), P(A), 0.21, 0.14, { grp: g, bones: [ti], k: 0.06 });
+  for (const dz of [0.095, -0.095])
+    cap(P([0.52, 2.0, 0.50 + dz]), P([0.25, 1.16, 0.475 + dz * 0.4]), 0.13, 0.08, { rm: 0.26, grp: g, bones: [fe, ti], wt: [0.0, 0.22], mus: 'gastroc_' + S, k: 0.05, soft: 0.4, f: 4.2 });
+  cap(P([0.25, 1.16, 0.475]), P([0.16, 0.80, 0.47]), 0.08, 0.065, { grp: g, bones: [ti, mt], wt: [0.75, 1], mus: 'gastroc_' + S, k: 0.05 });
+  cap(P([0.73, 1.81, 0.50]), P([0.33, 0.92, 0.47]), 0.08, 0.05, { rm: 0.12, grp: g, bones: [ti], mus: 'tibCran_' + S, k: 0.05, soft: 0.2, f: 4.5 });
+  // --- ankle, metatarsus ---
+  ell(P(A), [0.165, 0.165, 0.15], { grp: g, bones: [ti, mt], tfix: 0.5, k: 0.05 });
+  cap(P(A), P(M), [0.14, 0.14], [0.16, 0.145], { grp: g, up: sag, bones: [mt], k: 0.05 });
+  cap(P([0.20, 0.76, 0.47]), P([0.37, 0.22, 0.45]), 0.06, 0.06, { grp: g, bones: [mt], mus: 'digFlex_' + S, k: 0.04 });
+  // --- foot: metatarsal pad, three weight-bearing digits, hallux ---
+  ell(P([0.45, 0.112, 0.45]), [0.21, 0.105, 0.22], { grp: g, bones: [mt, 'd3a_' + S], tfix: 0.5, k: 0.05, mat: 3 });
+  for (const d of ['d2', 'd3', 'd4']) {
+    const q = DIG[d].map(P), ba = d + 'a_' + S, bb = d + 'b_' + S, sc = d === 'd3' ? 1.25 : 1.12;
+    cap(q[0], q[1], [0.088 * sc, 0.072 * sc], [0.078 * sc, 0.064 * sc], { grp: g, bones: [ba], k: 0.03 });
+    cap(q[1], q[2], [0.078 * sc, 0.064 * sc], [0.062 * sc, 0.052 * sc], { grp: g, bones: [bb], k: 0.03 });
+    ell([q[1][0], 0.052, q[1][2]], [0.10 * sc, 0.046, 0.085 * sc], { grp: g, bones: [ba, bb], tfix: 0.5, k: 0.025, mat: 3, axis: norm(sub(q[2], q[0])) });
+    ell([lerp(q[1], q[2], 0.8)[0], 0.044, lerp(q[1], q[2], 0.8)[2]], [0.085 * sc, 0.04, 0.07 * sc], { grp: g, bones: [bb], k: 0.025, mat: 3, axis: norm(sub(q[2], q[0])) });
+    const mid = add(lerp(q[2], q[3], 0.5), [0, 0.022, 0]);
+    cap(q[2], mid, [0.05 * sc, 0.05 * sc], [0.034 * sc, 0.04 * sc], { grp: g, bones: [bb], k: 0.012, mat: 1 });
+    cap(mid, q[3], [0.034 * sc, 0.04 * sc], [0.008, 0.012], { grp: g, bones: [bb], k: 0.01, mat: 1 });
+  }
+  cap(P([0.34, 0.35, 0.385]), P([0.30, 0.20, 0.31]), 0.042, 0.036, { grp: g, bones: [mt], k: 0.03 });
+  cap(P([0.30, 0.20, 0.31]), P([0.315, 0.10, 0.275]), 0.032, 0.008, { grp: g, bones: [mt], k: 0.01, mat: 1 });
+
+  // ================= FORELIMB =================
+  const SH = [2.62, 2.72, 0.50], EL = [2.50, 2.38, 0.58], WR = [2.70, 2.27, 0.53], FI = [2.85, 2.17, 0.50];
+  const hu = 'humerus_' + S, fa = 'forearm_' + S, ha = 'hand_' + S;
+  B(hu, 'dors4', P(SH)); B(fa, hu, P(EL)); B(ha, fa, P(WR));
+  cap(P(SH), P(EL), 0.095, 0.07, { grp: g, bones: [hu], mus: 'arm_' + S, k: 0.05, soft: 0.2, f: 5 });
+  cap(P(EL), P(WR), 0.066, 0.05, { grp: g, bones: [fa], k: 0.04 });
+  cap(P(WR), P(FI), 0.05, 0.04, { grp: g, bones: [ha], k: 0.03 });
+  for (const [o, e, c] of [[[2.85, 2.17, 0.52], [2.95, 2.09, 0.525], [3.01, 2.0, 0.52]], [[2.84, 2.175, 0.455], [2.94, 2.105, 0.445], [2.995, 2.02, 0.435]]]) {
+    cap(P(o), P(e), 0.032, 0.03, { grp: g, bones: [ha], k: 0.02 });
+    cap(P(e), P(c), 0.028, 0.006, { grp: g, bones: [ha], k: 0.008, mat: 1 });
+  }
+});
+
+// ================= HEAD (cranium + upper jaw) =================
+// Defined by profile curves in skull coordinates: dorsal outline, lip line, and plan-view width.
+const hup = HLd(0, 1, 0), hax = HLd(1, 0, 0);
+const H = { bones: ['head'], up: hup, axis: hax };
+const smax = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.max(a, b) + h * h * k * 0.25; };
+const zU = curve([[0.36, 0.365], [0.70, 0.288], [1.0, 0.238], [1.28, 0.185], [1.40, 0.11], [1.455, 0.03]]);        // lip line half-width
+const yTop = curve([[-0.06, 0.12], [0.0, 0.225], [0.15, 0.285], [0.35, 0.305], [0.55, 0.285], [0.8, 0.23], [1.05, 0.16], [1.25, 0.10], [1.38, 0.045], [1.445, -0.035], [1.47, -0.14]]);
+const yBot = curve([[-0.06, -0.40], [0.12, -0.50], [0.30, -0.44], [0.40, -0.375], [1.0, -0.365], [1.35, -0.362], [1.445, -0.36], [1.47, -0.335]]);
+const wMax = curve([[-0.06, 0.34], [0.08, 0.455], [0.30, 0.46], [0.45, 0.415], [0.60, 0.335], [0.80, 0.28], [1.05, 0.245], [1.25, 0.21], [1.38, 0.168], [1.47, 0.08]]);
+const topFrac = curve([[0, 0.66], [0.4, 0.60], [0.7, 0.46], [1.1, 0.48], [1.4, 0.62]]);                              // skull-roof width / max width
+function skullSDF(x, y, z) {
+  const q = toHL(x, y, z), X = q[0], Y = q[1], Zc = Math.abs(q[2]);
+  const xc = Math.min(1.47, Math.max(-0.06, X)), t = yTop(xc), b = yBot(xc), v = Math.min(1, Math.max(0, (Y - b) / (t - b)));
+  const w = wMax(xc) * (topFrac(xc) + (1 - topFrac(xc)) * (1 - Math.pow(v, 1.9))) * (0.9 + 0.1 * Math.min(1, v * 5));
+  let d = smax(smax(Zc - w, Y - t, 0.05), b - Y, 0.05);
+  d = smax(d, X - 1.465, 0.05); d = smax(d, -0.05 - X, 0.12);
+  return d * HSC * 0.8;
+}
+custom(skullSDF, HL(-0.25, -0.75, -0.6).map((v, i) => i === 2 ? -0.62 : v - 0.2), [HL(1.6, 0.4, 0)[0] + 0.1, HL(0, 0.45, 0)[1] + 0.2, 0.62], { ...H, k: 0.07 });
+sides((s, S) => {
+  ell(HL(0.27, 0.235, 0.31 * s), [0.13, 0.08, 0.085], { ...H, k: 0.08 });                                 // postorbital boss
+  ell(HL(0.57, 0.25, 0.20 * s), [0.10, 0.06, 0.055], { ...H, k: 0.07 });
+  cap(HL(0.60, 0.235, 0.17 * s), HL(1.0, 0.16, 0.10 * s), 0.05, 0.035, { ...H, k: 0.06 });                 // nasal-lacrimal ridge
+  ell(HL(0.34, -0.19, 0.40 * s), [0.14, 0.06, 0.04], { ...H, k: 0.07 });                                   // jugal flange                                 // lacrimal horn
+  cap(HL(0.30, 0.165, 0.345 * s), HL(0.54, 0.185, 0.255 * s), 0.045, 0.04, { ...H, k: 0.08 });               // brow
+  ell(HL(0.16, -0.02, 0.385 * s), [0.14, 0.16, 0.05], { ...H, k: 0.1, mus: 'jawAdd' });                     // adductor bulge
+  ell(HL(0.42, 0.07, 0.345 * s), [0.062, 0.062, 0.062], { ...H, carve: true, k: 0.025, mat: 4 });         // orbit
+  ell(HL(1.29, -0.035, 0.18 * s), [0.038, 0.02, 0.03], { ...H, carve: true, k: 0.02, mat: 4 });            // naris
+  ell(HL(0.06, -0.02, 0.455 * s), [0.022, 0.032, 0.03], { ...H, carve: true, k: 0.02, mat: 4 });           // ear
+});
+cap(HL(0.72, 0.235, 0), HL(1.22, 0.10, 0), [0.085, 0.035], [0.07, 0.03], { ...H, k: 0.07 });               // nasal rugosity
+// oral cavity (palate vault between the lips)
+custom((x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.455, Math.max(0.36, q[0]));
+  let d = smax(Math.abs(q[2]) - (zU(xc) - 0.075), q[1] + 0.24, 0.03); d = smax(d, 0.42 - q[0], 0.03); d = smax(d, q[0] - 1.385, 0.03); return d * HSC; },
+  [HL(0.3, 0, 0)[0], HL(1.4, -0.5, 0)[1], -0.4], [HL(1.5, 0, 0)[0], HL(0.3, -0.2, 0)[1], 0.4], { ...H, carve: true, k: 0.02, mat: 2 });
+
+// ================= LOWER JAW (separate surface so the mouth can open) =================
+const J = { grp: 'J', bones: ['jaw'], up: hup, axis: hax };
+const jTop = curve([[-0.04, -0.30], [0.36, -0.37], [1.0, -0.372], [1.40, -0.368]]);
+const jBot = curve([[-0.04, -0.47], [0.10, -0.635], [0.5, -0.66], [1.0, -0.60], [1.3, -0.535], [1.42, -0.455]]);
+const jW = curve([[-0.04, 0.38], [0.2, 0.425], [0.40, 0.336], [0.70, 0.259], [1.0, 0.209], [1.28, 0.155], [1.42, 0.07]]);
+function jawSDF(x, y, z) {
+  const q = toHL(x, y, z), X = q[0], Y = q[1], Zc = Math.abs(q[2]);
+  const xc = Math.min(1.42, Math.max(-0.04, X)), W = jW(xc), b = jBot(xc);
+  const t = jTop(xc) + 0.035 * Math.max(0, 1 - Math.pow(Zc / (0.45 * W), 2)) * sstep(0.4, 0.6, xc) * (1 - sstep(1.15, 1.3, xc)); // tongue
+  const v = Math.min(1, Math.max(0, (Y - b) / (t - b)));
+  const w = W * (0.5 + 0.5 * Math.pow(v, 0.6));
+  let d = smax(smax(Zc - w, Y - t, 0.035), b - Y, 0.08);
+  d = smax(d, X - 1.415, 0.07); d = smax(d, -0.03 - X, 0.1);
+  return d * HSC * 0.8;
+}
+custom(jawSDF, [HL(-0.2, -0.3, 0)[0] - 0.1, HL(1.4, -0.75, 0)[1] - 0.1, -0.56], [HL(1.55, -0.3, 0)[0], HL(0, -0.2, 0)[1] + 0.1, 0.56], { ...J, k: 0.05, soft: 0.3, f: 3 });
+sides((s) => { ell(HL(0.10, -0.50, 0.35 * s), [0.16, 0.10, 0.04], { ...J, k: 0.1, mus: 'jawAdd' }); });    // pterygoideus
+landmarks.jawTop = [[-0.04, -0.30], [0.36, -0.37], [1.0, -0.372], [1.40, -0.368]];
+export const jawMat = (x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.42, Math.max(-0.04, q[0])); if (q[0] < 0.36 || q[1] < jTop(xc) - 0.03) return 0; const W = jW(xc); return q[0] > 1.34 ? 0 : Math.abs(q[2]) < 0.45 * W && q[0] > 0.42 && q[0] < 1.28 ? 5 : Math.abs(q[2]) < W - 0.06 ? 2 : 0; };
+
+// ---------- runtime landmarks ----------
+landmarks.HL = { origin: HEAD, pitch: HP, scale: HSC };
+landmarks.eyes = [HL(0.42, 0.07, 0.305), HL(0.42, 0.07, -0.305)];
+landmarks.eyeR = 0.05 * HSC;
+// teeth: [root, tip, radius, bone]
+const teeth = [];
+sides((s) => {
+  for (let i = 0; i < 13; i++) {
+    const t = i / 12, x = 0.52 + 0.88 * t;
+    const zl = zU(x);
+    const z = (zl - 0.04) * s, L = 0.055 + 0.065 * Math.sin(Math.PI * Math.min(1, t * 1.15)) ** 1.2 + (i % 2) * 0.012;
+    teeth.push({ r: HL(x, -0.235, z), t: HL(x - 0.02, -0.235 - L, z * 0.985), rad: 0.016 + 0.2 * L * 0.5, b: 'head' });
+  }
+  for (let i = 0; i < 12; i++) {
+    const t = i / 11, x = 0.58 + 0.74 * t;
+    const zl = x < 0.95 ? 0.27 + (x - 0.42) / 0.53 * (0.14 - 0.27) : 0.14 + (x - 0.95) / 0.35 * (0.07 - 0.14);
+    const z = (zl - 0.012) * s, L = 0.04 + 0.045 * Math.sin(Math.PI * Math.min(1, t * 1.1)) + (i % 2) * 0.008;
+    teeth.push({ r: HL(x, -0.345, z), t: HL(x - 0.015, -0.345 + L, z), rad: 0.013 + 0.2 * L * 0.5, b: 'jaw' });
+  }
+});
+for (let i = 0; i < 4; i++) { // premaxillary teeth across the front
+  const z = (i - 1.5) * 0.05; teeth.push({ r: HL(1.40 - Math.abs(z) * 0.5, -0.235, z), t: HL(1.39 - Math.abs(z) * 0.5, -0.31, z), rad: 0.016, b: 'head' });
+}
+landmarks.teeth = teeth;
+
+// muscle paths for length estimation: [boneA, pointA, boneB, pointB] (right side; mirrored at runtime)
+landmarks.musclePaths = {
+  kneeExt: ['pelvis', [0.3, 3.5, 0.4], 'tibia', [0.76, 1.84, 0.5]],
+  hamstring: ['pelvis', [-0.6, 3.1, 0.3], 'tibia', [0.5, 1.78, 0.5]],
+  cfl: ['tail2', [-1.4, 2.85, 0.2], 'femur', [0.2, 2.66, 0.4]],
+  hipFlex: ['pelvis', [0.62, 3.38, 0.36], 'femur', [0.22, 2.74, 0.46]],
+  adductor: ['pelvis', [-0.45, 2.6, 0.14], 'femur', [0.5, 2.1, 0.41]],
+  gastroc: ['femur', [0.53, 1.99, 0.5], 'mt', [0.165, 0.80, 0.47]],
+  tibCran: ['tibia', [0.73, 1.81, 0.5], 'mt', [0.30, 0.74, 0.47]],
+  digFlex: ['mt', [0.20, 0.76, 0.47], 'd3a', [0.62, 0.05, 0.45]],
+};
