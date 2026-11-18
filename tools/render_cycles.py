@@ -8,7 +8,7 @@ from mathutils import Vector, Matrix
 
 a = sys.argv[1:]
 EXP, ASSETS, HEIGHT, OUT = a[0], a[1], a[2], a[3]
-opt = {'views': 'hero', 'res': '1280x720', 'samples': '96', 'exposure': 'auto', 'sss': '1', 'dof': '1', 'threads': '2', 'haze': '0', 'sun': '', 'elev': '', 'crop': ''}
+opt = {'views': 'hero', 'res': '1280x720', 'samples': '96', 'exposure': 'auto', 'sss': '1', 'dof': '1', 'threads': '2', 'haze': '0', 'sun': '', 'elev': '', 'crop': '', 'ev': '0', 'look': 'base'}
 for i in range(4, len(a) - 1, 2): opt[a[i].lstrip('-')] = a[i + 1]
 S = json.load(open(os.path.join(EXP, 'scene.json')))
 if opt['elev']: S['sunElev'] = float(opt['elev'])
@@ -286,7 +286,7 @@ def main():
     vs = scene.view_settings
     try: vs.view_transform = 'AgX'
     except Exception: pass
-    for look in ('AgX - Base Contrast', 'Base Contrast', 'None'):
+    for look in (('AgX - Medium High Contrast', 'Medium High Contrast') if opt['look'] == 'high' else ('AgX - Medium Contrast', 'Medium Contrast') if opt['look'] == 'med' else ('AgX - Base Contrast', 'Base Contrast', 'None')):
         try: vs.look = look; break
         except Exception: pass
     try: r.image_settings.file_format = 'PNG'; r.image_settings.color_mode = 'RGB'; r.image_settings.color_depth = '8'
@@ -298,7 +298,7 @@ def main():
         if opt['exposure'] == 'auto':   # meter the frame the way a camera would: a quick low-sample render, then expose for a mid-grey average
             r.resolution_percentage = 20; s0 = cy.samples; cy.samples = 12; vs.exposure = -4.0; r.filepath = '/tmp/meter.png'; bpy.ops.render.render(write_still=True)
             img = bpy.data.images.load('/tmp/meter.png'); px = np.array(img.pixels[:]).reshape(-1, 4)[:, :3]; lum = float(np.mean(np.power(np.clip(px, 1e-4, 1), 2.2) @ np.array([0.2126, 0.7152, 0.0722]))); bpy.data.images.remove(img)
-            vs.exposure = -4.0 + math.log2(0.16 / max(lum, 1e-4)) * 0.85; r.resolution_percentage = 100; cy.samples = s0; log(name, 'metered luminance', round(lum, 3), '-> exposure', round(vs.exposure, 2))
+            vs.exposure = -4.0 + math.log2(0.16 / max(lum, 1e-4)) * 0.85 + float(opt['ev']); r.resolution_percentage = 100; cy.samples = s0; log(name, 'metered luminance', round(lum, 3), '-> exposure', round(vs.exposure, 2))
         else: vs.exposure = float(opt['exposure'])
         if opt['crop']: c_ = [float(x) for x in opt['crop'].split(',')]; r.use_border = True; r.use_crop_to_border = True; r.border_min_x, r.border_min_y, r.border_max_x, r.border_max_y = c_
         r.filepath = '%s-%s.png' % (OUT, name); t = time.time(); bpy.ops.render.render(write_still=True); log('rendered', name, 'in', round(time.time() - t), 's ->', r.filepath)
