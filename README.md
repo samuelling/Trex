@@ -20,6 +20,10 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 
 **Soft tissue.** 111 wobbling masses distributed through the belly, thighs, tail base, neck and throat, each tethered to the skeleton by a damped spring and coupled to its neighbours. Nothing drives them except the motion of their anchors, so footfalls and limb accelerations ripple through the flesh. Active muscle is stiffer, so a relaxed swing-leg thigh wobbles more than a loaded one.
 
+**Skin.** The hide is its own simulated layer rather than paint on the muscle. A 10,900-vertex sheet covers the body and is solved every frame with position-based dynamics: each point is tied to the fascia underneath by a spring whose stiffness depends on how loose the skin is there (tight over the skull, shins and limb folds; loose on the throat, belly and flanks), it can lift off but not sink in, its edges resist stretch but go slack in compression, and gravity acts on it. So the skin lags and slides over the moving muscle, the dewlap and belly hang and sway, and where the sheet is compressed — inside of a bending neck, behind the thigh — the shader raises wrinkles from the measured strain, while stretched skin smooths out.
+
+**Surface detail.** `tools/build-rex.mjs` unwraps the body into a texture atlas and bakes 4K maps (2K on the light tier) from a procedural 3D skin field: scale tessellation that changes by region, wrinkle networks that follow the direction each joint folds, scutes on the feet, scars, mud, countershaded colour. Folds deeper than a few millimetres are pushed into the geometry itself; finer relief is a normal map, baked in the rest pose and rotated per pixel with the skin as it deforms. A tiling micro-detail layer keeps scales crisp in close-up.
+
 **Head.** Gaze is stabilised against the body's pitch, roll and yaw, with slow gaze shifts. The mouth has lips covering the teeth (Cullen et al. 2023); they show when it opens.
 
 ## Controls
@@ -28,20 +32,23 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 |---|---|
 | Speed | 0–7.5 m/s. At zero the animal finishes its step and stands. |
 | Camera | Seven views including a fixed tripod; drag to orbit, pinch/scroll to zoom. |
-| View | Skin · muscle activation heat-map · soft-tissue strain. |
+| View | Skin · muscle activation heat-map · skin strain (stretch and compression of the simulated hide). |
 | Forces | Ground reaction force vectors, centre of mass and its trajectory. |
 | ¼× time | Slow motion. |
-| Advanced | Muscle definition, soft-tissue wobble, tail natural frequency, sun position, quality. |
+| Advanced | Muscle definition, soft-tissue wobble, skin looseness, tail natural frequency, depth of field, sun position, quality. |
 
-Keys: `c` camera, `space` slow motion, `r` roar, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low`.
+Keys: `c` camera, `space` slow motion, `r` roar, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low&dof=1&sun=19&az=20`.
+
+Quality tiers: **high** loads the 386k-triangle mesh with 4K textures (about 20 MB) and is meant for a desktop GPU; **medium** and **low** use a 180k-triangle mesh with 2K textures (about 8 MB); low also drops depth of field and bloom. Phones start on low.
 
 ## What is approximate
 
 - This is a reduced-order model: forces and centre-of-mass motion are physical, but the legs follow them kinematically. It is not a forward-dynamic musculoskeletal simulation, and the muscle excitations are quasi-static inverse dynamics that ignore segment inertia in stance.
 - Soft tissue is a coarse lattice, not a finite-element solid. Wobble and muscle bulge are drawn at 1.5× by default so they read at a distance; set both to 1.0× in Advanced for the literal values.
+- The skin sheet is coarse (about 7.5 cm between points) and is pinned where limbs meet the trunk, so fine sliding there is not captured. Wrinkles are shaded, not geometric.
 - Skin colour and pattern are invented. Scale size is exaggerated relative to the few known skin impressions.
 - Mass for force read-outs is 8.4 t; the mesh volume would give ~8.3–9.3 t depending on assumed density.
-- The plants are a loose nod to the Hell Creek flora.
+- The plants are a loose nod to the Hell Creek flora. The setting is a real-time scene with one sun, a shadow map and image-based sky light — not a path-traced render.
 
 ## Layout
 
@@ -50,14 +57,20 @@ index.html           UI shell
 src/main.js          renderer, cameras, UI, main loop
 src/gait.js          gait scaling, ground reaction forces, COM dynamics, leg IK
 src/dynamics.js      spine, head, muscles, soft-tissue lattice
+src/skin.js          simulated skin sheet (slide, sag, strain)
+src/terrain.js       ground relief shared by the renderer and the gait
+src/dof.js           depth-of-field pass
 src/tail.js          elastic-beam tail
 src/rex.js           mesh, skeleton, eyes, teeth
 src/skinShader.js    integument + deformation shader
-src/world.js         sky, ground, vegetation, footprints, dust
+src/world.js         sky and cloud, ground and standing water, vegetation, footprints, dust
 tools/anatomy.mjs    skeleton and muscle definitions
-tools/build-rex.mjs  surface + weights builder  (npm run build)
+tools/build-rex.mjs  surface, weights, skin sheet, atlas and texture builder  (npm run build; needs `sharp`)
+tools/skinfield.mjs  procedural 3D skin relief and colour
+tools/unwrap.mjs     texture-atlas unwrap and packing
+tools/bake.mjs       texture baking
 tools/shot.mjs       headless screenshot harness used for verification
-assets/              built meshes (high and low detail, gzip)
+assets/              built meshes (gzip) and baked textures (WebP)
 vendor/              three.js r170 (MIT)
 ```
 

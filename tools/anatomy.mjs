@@ -13,7 +13,7 @@ const B = (name, parent, p) => { bones.push({ name, parent, p }); return p; };
 // ---------- primitive helpers ----------
 const R2 = r => (typeof r === 'number' ? [r, r] : r);
 const base = o => ({ up: o.up || [0, 1, 0], n: o.n || 2, k: o.k ?? 0.07, bones: o.bones, wt: o.wt || null, tfix: o.tfix ?? null,
-  grp: o.grp || 'C', mus: o.mus || null, soft: o.soft || 0, f: o.f || 3, mat: o.mat || 0, carve: !!o.carve, nodeOff: o.nodeOff || null });
+  grp: o.grp || 'C', mus: o.mus || null, soft: o.soft || 0, loose: o.loose ?? (o.soft || 0) * 0.6, f: o.f || 3, mat: o.mat || 0, carve: !!o.carve, nodeOff: o.nodeOff || null });
 // tapered elliptic capsule a->b; radii [rw (across), rh (along 'up')]
 function cap(a, b, ra, rb, o = {}) {
   prims.push({ type: 'cap', a, b, ra: R2(ra), rb: R2(rb), rm: o.rm ? R2(o.rm) : null, capA: o.capA ?? null, capB: o.capB ?? null, axis: o.axis || null, ...base(o) });
@@ -75,7 +75,7 @@ chain([
   { p: [1.90, 2.82, 0], r: [0.68, 0.75], b: 'dors3' },
   { p: [2.45, 2.94, 0], r: [0.57, 0.66], b: 'dors4' },
   { p: [2.86, 3.10, 0], r: [0.48, 0.58], b: 'neck1' },
-], { k: 0.12, soft: 0.8, f: 1.9, nodeOff: [0, -0.34, 0] });
+], { k: 0.12, soft: 0.8, loose: 0.6, f: 1.9, nodeOff: [0, -0.34, 0] });
 // neural spines / ilium crest
 chain([{ p: [-0.9, 3.48, 0], r: [0.13, 0.14], b: 'tail1' }, { p: [0, 3.55, 0], r: [0.14, 0.14], b: 'pelvis' }, { p: [0.75, 3.57, 0], r: [0.14, 0.13], b: 'dors1' },
   { p: [1.6, 3.57, 0], r: [0.14, 0.13], b: 'dors3' }, { p: [2.7, 3.52, 0], r: [0.15, 0.13], b: 'neck1' }], { k: 0.1 });
@@ -101,13 +101,13 @@ const neck = [
   { p: [3.84, 3.84, 0], r: [0.38, 0.44], b: 'head' },
   { p: [4.02, 3.86, 0], r: [0.37, 0.42], b: 'head' },
 ];
-chain(neck, { k: 0.1, soft: 0.25, f: 3.4 });
+chain(neck, { k: 0.1, soft: 0.25, loose: 0.4, f: 3.4 });
 sides((s, S) => {
   chain(neck.slice(0, 5).map((q, i) => ({ p: [q.p[0] - 0.10, q.p[1] + 0.26 - 0.01 * i, 0.16 * s], r: 0.21 - 0.012 * i, b: q.b })), { k: 0.08, mus: 'neckDors_' + S, soft: 0.2, f: 3.6 });
 });
 // throat / ventral neck (longus colli, trachea, loose skin)
 chain([{ p: [2.70, 2.62, 0], r: [0.28, 0.20], b: 'dors4' }, { p: [3.16, 2.96, 0], r: [0.26, 0.18], b: 'neck2' }, { p: [3.55, 3.24, 0], r: [0.24, 0.16], b: 'neck3' }, { p: [3.90, 3.40, 0], r: [0.24, 0.14], b: 'head' }],
-  { k: 0.1, mus: 'neckVent', soft: 0.7, f: 2.4 });
+  { k: 0.1, mus: 'neckVent', soft: 0.7, loose: 1.0, f: 2.4 });
 
 // ================= TAIL =================
 const tcy = [3.02, 3.03, 3.04, 3.04, 3.04, 3.04, 3.04, 3.04, 3.045, 3.055, 3.075, 3.10, 3.125];
@@ -121,7 +121,7 @@ sides((s, S) => {
   // epaxial (m. longissimus caudae) high
   chain(tst((x, i) => ({ p: [x, tcy[i] + 0.42 * trh[i], 0.42 * trw[i] * s], r: 0.5 * trw[i], b: tb(i) })), { k: 0.06, mus: 'tailLat_' + S, soft: 0.25, f: 3.4 });
   // caudofemoralis longus low on the proximal tail, ilio-ischiocaudalis beyond
-  chain(tst((x, i) => i <= 5 && ({ p: [x, tcy[i] - 0.36 * trh[i], 0.46 * trw[i] * s], r: 0.64 * trw[i], b: tb(i) })), { k: 0.06, mus: 'cfl_' + S, soft: 0.55, f: 2.7 });
+  chain(tst((x, i) => i <= 5 && ({ p: [x, tcy[i] - 0.36 * trh[i], 0.46 * trw[i] * s], r: 0.64 * trw[i], b: tb(i) })), { k: 0.06, mus: 'cfl_' + S, soft: 0.55, loose: 0.5, f: 2.7 });
   chain(tst((x, i) => i >= 5 && ({ p: [x, tcy[i] - 0.36 * trh[i], 0.46 * trw[i] * s], r: 0.64 * trw[i], b: tb(i) })), { k: 0.04, mus: 'tailLat_' + S, soft: 0.15, f: 3.4 });
 });
 
@@ -202,31 +202,45 @@ const hup = HLd(0, 1, 0), hax = HLd(1, 0, 0);
 const H = { bones: ['head'], up: hup, axis: hax };
 const smax = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.max(a, b) + h * h * k * 0.25; };
 const zU = curve([[0.36, 0.365], [0.70, 0.288], [1.0, 0.238], [1.28, 0.185], [1.40, 0.11], [1.455, 0.03]]);        // lip line half-width
-const yTop = curve([[-0.06, 0.12], [0.0, 0.225], [0.15, 0.285], [0.35, 0.305], [0.55, 0.285], [0.8, 0.23], [1.05, 0.16], [1.25, 0.10], [1.38, 0.045], [1.445, -0.035], [1.47, -0.14]]);
+const yTop = curve([[-0.06, 0.10], [0.0, 0.205], [0.14, 0.255], [0.30, 0.268], [0.46, 0.268], [0.60, 0.252], [0.8, 0.205], [1.05, 0.138], [1.25, 0.068], [1.38, 0.0], [1.445, -0.09], [1.47, -0.19]]);
 const yBot = curve([[-0.06, -0.40], [0.12, -0.50], [0.30, -0.44], [0.40, -0.375], [1.0, -0.365], [1.35, -0.362], [1.445, -0.36], [1.47, -0.335]]);
-const wMax = curve([[-0.06, 0.34], [0.08, 0.455], [0.30, 0.46], [0.45, 0.415], [0.60, 0.335], [0.80, 0.28], [1.05, 0.245], [1.25, 0.21], [1.38, 0.168], [1.47, 0.08]]);
-const topFrac = curve([[0, 0.66], [0.4, 0.60], [0.7, 0.46], [1.1, 0.48], [1.4, 0.62]]);                              // skull-roof width / max width
+const wMax = curve([[-0.06, 0.34], [0.08, 0.455], [0.30, 0.46], [0.45, 0.41], [0.60, 0.325], [0.80, 0.272], [1.05, 0.24], [1.25, 0.208], [1.38, 0.168], [1.47, 0.08]]);
+const topFrac = curve([[0, 0.66], [0.4, 0.60], [0.62, 0.50], [0.8, 0.44], [1.1, 0.44], [1.4, 0.60]]);                 // skull-roof width / max width
+const bevel = curve([[0, 0.35], [0.45, 0.45], [0.7, 0.66], [1.2, 0.68], [1.45, 0.5]]);                               // height fraction where the flat side turns in to the roof
+const edgeK = curve([[0, 0.07], [0.5, 0.06], [0.75, 0.034], [1.3, 0.034], [1.47, 0.05]]);                            // how sharp the roof/side edge is
 function skullSDF(x, y, z) {
   const q = toHL(x, y, z), X = q[0], Y = q[1], Zc = Math.abs(q[2]);
-  const xc = Math.min(1.47, Math.max(-0.06, X)), t = yTop(xc), b = yBot(xc), v = Math.min(1, Math.max(0, (Y - b) / (t - b)));
-  const w = wMax(xc) * (topFrac(xc) + (1 - topFrac(xc)) * (1 - Math.pow(v, 1.9))) * (0.9 + 0.1 * Math.min(1, v * 5));
-  let d = smax(smax(Zc - w, Y - t, 0.05), b - Y, 0.05);
-  d = smax(d, X - 1.465, 0.05); d = smax(d, -0.05 - X, 0.12);
+  const xc = Math.min(1.47, Math.max(-0.06, X)), t = yTop(xc), b = yBot(xc), v = Math.min(1, Math.max(0, (Y - b) / (t - b))), tf = topFrac(xc), bv = bevel(xc);
+  // flat-sided below the bevel, then leaning in to the narrower roof; lips tuck in slightly
+  const w = wMax(xc) * (1 - (1 - tf) * sstep(bv, 1.0, v) ** 1.25) * (0.93 + 0.07 * Math.min(1, v * 6));
+  let d = smax(smax(Zc - w, Y - t, edgeK(xc)), b - Y, 0.045);
+  d = smax(d, X - 1.465, 0.045); d = smax(d, -0.05 - X, 0.12);
   return d * HSC * 0.8;
 }
-custom(skullSDF, HL(-0.25, -0.75, -0.6).map((v, i) => i === 2 ? -0.62 : v - 0.2), [HL(1.6, 0.4, 0)[0] + 0.1, HL(0, 0.45, 0)[1] + 0.2, 0.62], { ...H, k: 0.07 });
+custom(skullSDF, HL(-0.25, -0.75, -0.6).map((v, i) => i === 2 ? -0.62 : v - 0.2), [HL(1.6, 0.4, 0)[0] + 0.1, HL(0, 0.45, 0)[1] + 0.2, 0.62], { ...H, k: 0.06 });
 sides((s, S) => {
-  ell(HL(0.27, 0.235, 0.31 * s), [0.13, 0.08, 0.085], { ...H, k: 0.08 });                                 // postorbital boss
-  ell(HL(0.57, 0.25, 0.20 * s), [0.10, 0.06, 0.055], { ...H, k: 0.07 });
-  cap(HL(0.60, 0.235, 0.17 * s), HL(1.0, 0.16, 0.10 * s), 0.05, 0.035, { ...H, k: 0.06 });                 // nasal-lacrimal ridge
-  ell(HL(0.34, -0.19, 0.40 * s), [0.14, 0.06, 0.04], { ...H, k: 0.07 });                                   // jugal flange                                 // lacrimal horn
-  cap(HL(0.30, 0.165, 0.345 * s), HL(0.54, 0.185, 0.255 * s), 0.045, 0.04, { ...H, k: 0.08 });               // brow
-  ell(HL(0.16, -0.02, 0.385 * s), [0.14, 0.16, 0.05], { ...H, k: 0.1, mus: 'jawAdd' });                     // adductor bulge
-  ell(HL(0.42, 0.07, 0.345 * s), [0.062, 0.062, 0.062], { ...H, carve: true, k: 0.025, mat: 4 });         // orbit
-  ell(HL(1.29, -0.035, 0.18 * s), [0.038, 0.02, 0.03], { ...H, carve: true, k: 0.02, mat: 4 });            // naris
-  ell(HL(0.06, -0.02, 0.455 * s), [0.022, 0.032, 0.03], { ...H, carve: true, k: 0.02, mat: 4 });           // ear
+  // cranial ornament: nasal-lacrimal ridge running back into the lacrimal horn, brow, postorbital boss
+  chain([{ p: HL(1.24, 0.05, 0.098 * s), r: 0.024, b: 'head' }, { p: HL(0.97, 0.143, 0.112 * s), r: 0.032, b: 'head' }, { p: HL(0.74, 0.22, 0.148 * s), r: 0.04, b: 'head' }, { p: HL(0.58, 0.272, 0.195 * s), r: 0.048, b: 'head' }], { up: hup, k: 0.05 });
+  ell(HL(0.555, 0.276, 0.205 * s), [0.115, 0.034, 0.04], { ...H, k: 0.05 });                             // lacrimal horn
+  cap(HL(0.53, 0.238, 0.25 * s), HL(0.33, 0.215, 0.335 * s), 0.04, 0.044, { ...H, k: 0.055 });              // brow over the orbit
+  ell(HL(0.285, 0.236, 0.30 * s), [0.125, 0.042, 0.055], { ...H, k: 0.06 });                             // postorbital boss
+  chain([{ p: HL(0.56, -0.085, 0.36 * s), r: 0.036, b: 'head' }, { p: HL(0.40, -0.135, 0.405 * s), r: 0.046, b: 'head' }, { p: HL(0.22, -0.185, 0.432 * s), r: 0.05, b: 'head' }, { p: HL(0.08, -0.2, 0.43 * s), r: 0.045, b: 'head' }], { up: hup, k: 0.04 });   // jugal flange
+  ell(HL(0.17, 0.0, 0.40 * s), [0.13, 0.13, 0.05], { ...H, k: 0.07, mus: 'jawAdd' });                       // adductor bulging through the temporal opening
+  ell(HL(0.80, 0.02, 0.305 * s), [0.19, 0.085, 0.032], { ...H, carve: true, k: 0.07 });                      // antorbital fossa (shallow)
+  // lip roll along the tooth row
+  chain([0.40, 0.62, 0.85, 1.08, 1.28, 1.40].map(x => ({ p: HL(x, -0.342, (zU(x) + 0.004) * s), r: 0.024, b: 'head' })), { up: hup, k: 0.022 });
+  // palpebral fissure: an almond (vesica) cut through the lids to the globe
+  custom((x, y, z) => { const q = toHL(x, y, z), X = q[0] - 0.42, Y = q[1] - 0.072, Zs = q[2] * s, ca = Math.cos(-0.2), sa = Math.sin(-0.2), u = X * ca + Y * sa, v = -X * sa + Y * ca;
+    const hh = 0.034, hw = 0.062, R = (hw * hw + hh * hh) / (2 * hh), d2 = Math.max(Math.hypot(u, v + (R - hh)) - R, Math.hypot(u, v - (R - hh)) - R);
+    return smax(d2, Math.max(0.295 - Zs, Zs - 0.6), 0.01) * HSC; },
+    [HL(0.3, 0, 0)[0] - 0.1, HL(0.42, -0.1, 0)[1] - 0.15, s > 0 ? 0.2 : -0.7], [HL(0.55, 0, 0)[0] + 0.1, HL(0.42, 0.2, 0)[1] + 0.1, s > 0 ? 0.7 : -0.2], { ...H, carve: true, k: 0.01, mat: 4 });
+  cap(HL(0.335, 0.108, 0.368 * s), HL(0.50, 0.12, 0.328 * s), 0.028, 0.024, { ...H, k: 0.03 });             // upper lid fold
+  cap(HL(0.35, 0.026, 0.378 * s), HL(0.49, 0.028, 0.338 * s), 0.02, 0.018, { ...H, k: 0.028 });             // lower lid
+  ell(HL(1.27, -0.055, 0.196 * s), [0.05, 0.026, 0.035], { ...H, carve: true, k: 0.018, mat: 4 });          // naris
+  ell(HL(1.205, -0.022, 0.19 * s), [0.055, 0.03, 0.028], { ...H, k: 0.04 });                                  // narial rim
+  ell(HL(0.06, -0.02, 0.455 * s), [0.022, 0.032, 0.03], { ...H, carve: true, k: 0.02, mat: 4 });            // ear
 });
-cap(HL(0.72, 0.235, 0), HL(1.22, 0.10, 0), [0.085, 0.035], [0.07, 0.03], { ...H, k: 0.07 });               // nasal rugosity
+cap(HL(0.74, 0.208, 0), HL(1.22, 0.062, 0), [0.07, 0.03], [0.06, 0.028], { ...H, k: 0.05 });                // nasal rugosity
 // oral cavity (palate vault between the lips)
 custom((x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.455, Math.max(0.36, q[0]));
   let d = smax(Math.abs(q[2]) - (zU(xc) - 0.075), q[1] + 0.24, 0.03); d = smax(d, 0.42 - q[0], 0.03); d = smax(d, q[0] - 1.385, 0.03); return d * HSC; },
@@ -234,27 +248,32 @@ custom((x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.455, Math.max(0.3
 
 // ================= LOWER JAW (separate surface so the mouth can open) =================
 const J = { grp: 'J', bones: ['jaw'], up: hup, axis: hax };
-const jTop = curve([[-0.04, -0.30], [0.36, -0.37], [1.0, -0.372], [1.40, -0.368]]);
-const jBot = curve([[-0.04, -0.47], [0.10, -0.635], [0.5, -0.66], [1.0, -0.60], [1.3, -0.535], [1.42, -0.455]]);
+const jTop = curve([[-0.04, -0.30], [0.36, -0.352], [1.0, -0.354], [1.40, -0.352]]);
+const jBot = curve([[-0.04, -0.47], [0.10, -0.635], [0.5, -0.655], [1.0, -0.585], [1.3, -0.505], [1.42, -0.43]]);
 const jW = curve([[-0.04, 0.38], [0.2, 0.425], [0.40, 0.336], [0.70, 0.259], [1.0, 0.209], [1.28, 0.155], [1.42, 0.07]]);
 function jawSDF(x, y, z) {
   const q = toHL(x, y, z), X = q[0], Y = q[1], Zc = Math.abs(q[2]);
   const xc = Math.min(1.42, Math.max(-0.04, X)), W = jW(xc), b = jBot(xc);
   const t = jTop(xc) + 0.035 * Math.max(0, 1 - Math.pow(Zc / (0.45 * W), 2)) * sstep(0.4, 0.6, xc) * (1 - sstep(1.15, 1.3, xc)); // tongue
   const v = Math.min(1, Math.max(0, (Y - b) / (t - b)));
-  const w = W * (0.5 + 0.5 * Math.pow(v, 0.6));
+  const w = W * (0.6 + 0.4 * Math.pow(v, 0.5));
   let d = smax(smax(Zc - w, Y - t, 0.035), b - Y, 0.08);
   d = smax(d, X - 1.415, 0.07); d = smax(d, -0.03 - X, 0.1);
   return d * HSC * 0.8;
 }
 custom(jawSDF, [HL(-0.2, -0.3, 0)[0] - 0.1, HL(1.4, -0.75, 0)[1] - 0.1, -0.56], [HL(1.55, -0.3, 0)[0], HL(0, -0.2, 0)[1] + 0.1, 0.56], { ...J, k: 0.05, soft: 0.3, f: 3 });
-sides((s) => { ell(HL(0.10, -0.50, 0.35 * s), [0.16, 0.10, 0.04], { ...J, k: 0.1, mus: 'jawAdd' }); });    // pterygoideus
+sides((s) => { ell(HL(0.10, -0.50, 0.35 * s), [0.16, 0.10, 0.04], { ...J, k: 0.1, mus: 'jawAdd' });      // pterygoideus
+  chain([0.42, 0.65, 0.9, 1.12, 1.3].map(x => ({ p: HL(x, -0.378, jW(x) * s), r: 0.02, b: 'jaw' })), { grp: 'J', up: hup, k: 0.02 }); });   // lower lip
 landmarks.jawTop = [[-0.04, -0.30], [0.36, -0.37], [1.0, -0.372], [1.40, -0.368]];
-export const jawMat = (x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.42, Math.max(-0.04, q[0])); if (q[0] < 0.36 || q[1] < jTop(xc) - 0.03) return 0; const W = jW(xc); return q[0] > 1.34 ? 0 : Math.abs(q[2]) < 0.45 * W && q[0] > 0.42 && q[0] < 1.28 ? 5 : Math.abs(q[2]) < W - 0.06 ? 2 : 0; };
+export const jawMat = (x, y, z) => { const q = toHL(x, y, z), xc = Math.min(1.42, Math.max(-0.04, q[0])); if (q[0] < 0.36 || q[1] < jTop(xc) - 0.03) return 0; const W = jW(xc); return q[0] > 1.34 ? 0 : Math.abs(q[2]) < 0.45 * W && q[0] > 0.42 && q[0] < 1.28 ? 5 : Math.abs(q[2]) < W - 0.085 ? 2 : 0; };
 
 // ---------- runtime landmarks ----------
 landmarks.HL = { origin: HEAD, pitch: HP, scale: HSC };
-landmarks.eyes = [HL(0.42, 0.07, 0.305), HL(0.42, 0.07, -0.305)];
+landmarks.snout = HL(1.47, -0.1, 0);
+landmarks.chains = {
+  spine: [...Array.from({ length: 12 }, (_, i) => 'tail' + (12 - i)), 'pelvis', 'dors1', 'dors2', 'dors3', 'dors4', 'neck1', 'neck2', 'neck3', 'neck4', 'head'],
+};
+landmarks.eyes = [HL(0.42, 0.072, 0.334), HL(0.42, 0.072, -0.334)];
 landmarks.eyeR = 0.05 * HSC;
 // teeth: [root, tip, radius, bone]
 const teeth = [];

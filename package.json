@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Tyrannosaurus rex: real-time locomotion and soft-tissue simulation",
+  "devDependencies": { "sharp": "^0.33.0" },
   "scripts": {
-    "build": "node --max-old-space-size=6500 tools/build-rex.mjs hi && node --max-old-space-size=6500 tools/build-rex.mjs lo",
+    "build": "node --max-old-space-size=6500 tools/build-rex.mjs hi 4096 && node --max-old-space-size=6500 tools/build-rex.mjs lo 2048",
     "serve": "python3 -m http.server 8080"
   }
 }

@@ -1,6 +1,7 @@
 // The animal: loads the built surface, sets up the skeleton, skin material, eyes and teeth.
 import * as THREE from 'three';
 import { VERT_PARS, VERT_MAIN, FRAG_PARS } from './skinShader.js';
+import { SkinLayer } from './skin.js';
 
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 
@@ -13,23 +14,31 @@ export class Rex {
     const counted = res.body.pipeThrough(new TransformStream({ transform(chunk, ctl) { got += chunk.length; if (onProgress && total) onProgress(Math.min(1, got / total)); ctl.enqueue(chunk); } }));
     const buf = await new Response(counted.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
     { const L = meta.layout.index, ix = new Uint32Array(buf, L.offset, L.length); for (let i = 1; i < ix.length; i++) ix[i] = (ix[i] + ix[i - 1]) >>> 0; }
-    return new Rex(meta, buf);
+    if (onProgress) onProgress(1);
+    const tl = new THREE.TextureLoader(), aniso = 8;
+    const T = async (file, srgb, repeat) => { const t = await tl.loadAsync('assets/' + file); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = aniso; t.wrapS = t.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; return t; };
+    const [albedo, normal, orm, detail] = await Promise.all([T(`rex-${lod}-albedo.webp`, true), T(`rex-${lod}-normal.webp`), T(`rex-${lod}-orm.webp`), T('skin-detail.webp', false, true)]);
+    return new Rex(meta, buf, { albedo, normal, orm, detail });
   }
 
-  constructor(meta, buf) {
+  constructor(meta, buf, tex) {
     this.meta = meta; this.group = new THREE.Group();
     const L = meta.layout, arr = (k, T) => new T(buf, L[k].offset, L[k].length);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(arr('position', Float32Array), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(arr('normal', Int8Array), 4, true));
     g.setAttribute('skinIndex', new THREE.BufferAttribute(arr('skinIndex', Uint8Array), 4));
-    g.setAttribute('skinWeight', new THREE.BufferAttribute(arr('skinWeight', Uint8Array), 4, true));
+    g.setAttribute('skinWeight', new THREE.BufferAttribute(arr('skinWeight', Uint16Array), 4, true));
+    g.setAttribute('aUv', new THREE.BufferAttribute(arr('uv', Uint16Array), 2, true));
     g.setAttribute('aMusIndex', new THREE.BufferAttribute(arr('musIndex', Uint8Array), 4));
     g.setAttribute('aMusWeight', new THREE.BufferAttribute(arr('musWeight', Uint8Array), 4, true));
     g.setAttribute('aMusGradA', new THREE.BufferAttribute(arr('musGradA', Int8Array), 4, true));
     g.setAttribute('aMusGradB', new THREE.BufferAttribute(arr('musGradB', Int8Array), 4, true));
     g.setAttribute('aNodeIndex', new THREE.BufferAttribute(arr('nodeIndex', Uint8Array), 4));
     g.setAttribute('aMisc', new THREE.BufferAttribute(arr('misc', Uint8Array), 4, true));
+    g.setAttribute('aMisc2', new THREE.BufferAttribute(arr('misc2', Uint8Array), 4, true));
+    g.setAttribute('aBindIndex', new THREE.BufferAttribute(arr('bindIndex', Uint16Array), 4));
+    g.setAttribute('aBindWeight', new THREE.BufferAttribute(arr('bindWeight', Uint8Array), 4, true));
     g.setIndex(new THREE.BufferAttribute(arr('index', Uint32Array), 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 2.5, 0), 9);
 
@@ -48,9 +57,11 @@ export class Rex {
     meta.nodes.forEach((n, j) => { this.nodeData.set([0, 0, 0, n.soft], j * 4); this.nodeData.set([n.p[0], n.p[1], n.p[2], n.R], (256 + j) * 4); });
     this.nodeTex = new THREE.DataTexture(this.nodeData, 256, 2, THREE.RGBAFormat, THREE.FloatType);
     this.nodeTex.magFilter = this.nodeTex.minFilter = THREE.NearestFilter; this.nodeTex.needsUpdate = true;
-    this.uniforms = { uMus: { value: this.uMus }, uAct: { value: this.uAct }, uNodeTex: { value: this.nodeTex }, uBreath: { value: 0 }, uView: { value: 0 }, uDetail: { value: 1 }, uWet: { value: 0 } };
+    this.skin = new SkinLayer(this, buf);
+    this.uniforms = { uMus: { value: this.uMus }, uAct: { value: this.uAct }, uNodeTex: { value: this.nodeTex }, uSkinTex: { value: this.skin.tex }, uSkinRest: { value: this.skin.restTex }, uBreath: { value: 0 }, uView: { value: 0 }, uDetail: { value: 1 }, uWrinkle: { value: 1 },
+      tAlbedo: { value: tex.albedo }, tNormal: { value: tex.normal }, tORM: { value: tex.orm }, tDetail: { value: tex.detail } };
 
-    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0, sheen: 0.12, sheenRoughness: 0.7, sheenColor: new THREE.Color(0.35, 0.3, 0.22) });
+    const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0, sheen: 0.1, sheenRoughness: 0.75, sheenColor: new THREE.Color(0.35, 0.3, 0.22) });
     mat.onBeforeCompile = (sh) => {
       Object.assign(sh.uniforms, this.uniforms);
       sh.vertexShader = sh.vertexShader
@@ -62,10 +73,10 @@ export class Rex {
         .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
         .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = rexSkin();')
         .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = rexRough;')
-        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = rexPerturb(normal, -vViewPosition, rexH * 1.25);')
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(rexN, 0.0)).xyz); normal = rexPerturb(normal, -vViewPosition, (rexFold - 0.5) * 0.03 * rexComp);')
         .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= rexAO; reflectedLight.indirectSpecular *= rexAO * rexAO; reflectedLight.directDiffuse *= mix(1.0, rexAO, 0.35);');
     };
-    this.material = mat; this.lowDefine = (low) => { mat.defines = { ...(mat.defines || {}) }; if (low) mat.defines.REX_LOW = ''; else delete mat.defines.REX_LOW; mat.needsUpdate = true; };
+    this.material = mat;
     const mesh = new THREE.SkinnedMesh(g, mat);
     mesh.bind(this.skeleton, new THREE.Matrix4()); mesh.frustumCulled = false; mesh.castShadow = mesh.receiveShadow = true;
     this.mesh = mesh; this.group.add(mesh);
@@ -89,7 +100,7 @@ export class Rex {
         .replace('#include <color_fragment>', `#include <color_fragment>
         { vec3 q = normalize(vEye); float rr = length(q.xy), an = atan(q.y, q.x);
           float fib = en(vec2(an * 9.0, rr * 14.0)) * 0.6 + en(vec2(an * 31.0, rr * 5.0)) * 0.4;
-          vec3 iris = mix(vec3(0.62, 0.30, 0.035), vec3(0.24, 0.10, 0.015), fib); iris = mix(iris, vec3(0.80, 0.52, 0.10), smoothstep(0.42, 0.30, rr) * 0.6);
+          vec3 iris = mix(vec3(0.34, 0.17, 0.03), vec3(0.12, 0.055, 0.012), fib); iris = mix(iris, vec3(0.46, 0.30, 0.07), smoothstep(0.42, 0.30, rr) * 0.55);
           vec3 c = mix(vec3(0.0), iris, smoothstep(0.27, 0.31, rr)); c = mix(c, vec3(0.03, 0.02, 0.015), smoothstep(0.56, 0.66, rr));
           if (q.z < 0.0) c = vec3(0.03, 0.02, 0.015); diffuseColor.rgb = c; }`);
     };
@@ -133,5 +144,5 @@ export class Rex {
     m.scale.set(0.30, 0.16, 0.30); m.position.copy(HL(0.22, -0.36)); m.rotation.z = lm.HL.pitch; this.attach(m, 'head');
   }
 
-  setQuality(detail, low) { this.uniforms.uDetail.value = detail; this.lowDefine(!!low); }
+  setQuality(detail) { this.uniforms.uDetail.value = detail; }
 }

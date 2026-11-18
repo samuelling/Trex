@@ -89,6 +89,7 @@ export class Body {
     this.#muscles(dt, roar);
     this.flesh.gain = this.fleshGain;
     this.flesh.update(dt, this.act);
+    this.rex.skin.update(dt);
   }
 
   // Tail: elastic beam cantilevered from the pelvis (see tail.js); bones follow the simulated joints.

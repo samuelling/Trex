@@ -10,6 +10,7 @@ import { Locomotion } from './gait.js';
 import { Body } from './dynamics.js';
 import { World } from './world.js';
 import { Sound } from './sound.js';
+import { DofPass } from './dof.js';
 
 const $ = id => document.getElementById(id), Q = new URLSearchParams(location.search);
 const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && Math.min(innerWidth, innerHeight) < 820);
@@ -21,7 +22,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'h
 const DPR = Math.min(devicePixelRatio || 1, quality === 'high' ? 2 : quality === 'med' ? 1.75 : 1.5);
 renderer.setPixelRatio(DPR); renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.6;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.5;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.15, 1500);
@@ -30,17 +31,19 @@ controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistan
 
 let rex; try { rex = await Rex.load(lod, f => { $('lp').style.width = (f * 90).toFixed(0) + '%'; }); } catch (e) { $('lt').textContent = 'Could not load: ' + e.message + ' (needs a current browser with WebGL 2)'; throw e; }
 $('lt').textContent = 'compiling shaders…';
-rex.setQuality(quality === 'low' ? 0.85 : 1, quality === 'low');
+rex.setQuality(1);
 scene.add(rex.group);
-const loco = new Locomotion(rex), body = new Body(rex, loco), world = new World(scene, renderer, { pathR: loco.R, low: quality === 'low', sunElev: +(Q.get('sun') || 24), sunAz: +(Q.get('az') || 62) });
+const loco = new Locomotion(rex), body = new Body(rex, loco), world = new World(scene, renderer, { pathR: loco.R, low: quality === 'low', sunElev: +(Q.get('sun') || 19), sunAz: +(Q.get('az') || 20) });
 const sound = new Sound();
 loco.target = Q.has('speed') ? +Q.get('speed') : 1.3;
 
 // ---- post ----
 const size = new THREE.Vector2(); renderer.getDrawingBufferSize(size);
 const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: quality === 'high' ? 4 : quality === 'med' ? 2 : 0 });
+if (quality !== 'low') { rt.depthTexture = new THREE.DepthTexture(size.x, size.y); rt.depthTexture.type = THREE.UnsignedIntType; }
 const composer = new EffectComposer(renderer, rt);
 composer.addPass(new RenderPass(scene, camera));
+const dof = quality !== 'low' ? new DofPass(camera) : null; if (dof) { dof.aperture = Q.has('dof') ? +Q.get('dof') : 1; composer.addPass(dof); }
 if (quality !== 'low') composer.addPass(new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.16, 0.7, 0.9));
 const grade = new ShaderPass({ uniforms: { tDiffuse: { value: null }, uT: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -91,7 +94,7 @@ function placeTripod() { // fixed camera beside the path, a little ahead of the 
 
 // ---- UI ----
 const state = { timeScale: 1, view: 0 };
-const VIEWS = ['Skin', 'Muscle activation', 'Soft-tissue strain'];
+const VIEWS = ['Skin', 'Muscle activation', 'Skin strain'];
 const spd = $('spd'); spd.value = loco.target;
 const showSpd = () => { $('spdO').textContent = (+spd.value).toFixed(2) + ' m/s'; };
 spd.oninput = () => { loco.target = +spd.value; showSpd(); }; showSpd();
@@ -107,9 +110,11 @@ if (innerHeight < 620 || innerWidth < 560) $('hudToggle').onclick();
 const bind = (id, fmt, fn) => { const e = $(id), o = $(id + 'O'); const f = () => { o.textContent = fmt(+e.value); fn(+e.value); }; e.oninput = f; };
 bind('aMus', v => v.toFixed(1) + '×', v => { body.musGain = v; });
 bind('aFlesh', v => v.toFixed(1) + '×', v => { body.fleshGain = v; });
+bind('aLoose', v => v.toFixed(1) + '×', v => { rex.skin.setLooseness(v); });
 bind('aTail', v => v.toFixed(2) + ' Hz', v => { body.tailFv = v; });
 let sunT = 0; const sun = () => { clearTimeout(sunT); sunT = setTimeout(() => world.setSun(+$('aSun').value, +$('aAz').value), 60); };
 bind('aSun', v => v + '°', sun); bind('aAz', v => v + '°', sun);
+bind('aDof', v => v.toFixed(1), v => { if (dof) dof.aperture = v; });
 $('aSun').value = world.elev; $('aSunO').textContent = world.elev + '°'; $('aAz').value = world.az; $('aAzO').textContent = world.az + '°';
 $('aQ').onchange = e => { localStorage.setItem('rexQ', e.target.value); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u; };
 if (forces.visible) $('bForce').classList.add('on');
@@ -174,7 +179,7 @@ const clock = new THREE.Clock(); let fpsAcc = 0, fpsN = 0;
 function frame() {
   const raw = Math.min(0.05, clock.getDelta()), dt = raw * state.timeScale;
   if (!window.__paused && dt > 1e-4) { const n = Math.max(1, Math.ceil(dt / (1 / 90))); for (let i = 0; i < n; i++) step(dt / n); }
-  world.follow(loco.pos); frameCamera(raw); hud(raw); grade.uniforms.uT.value = (performance.now() % 1000) / 1000;
+  world.follow(loco.pos); frameCamera(raw); hud(raw); if (dof) { tmp.copy(loco.O).addScaledVector(loco.heading, 1.6).setY(2.6); dof.focus = Math.max(1.5, camera.position.distanceTo(tmp) - 0.6); } grade.uniforms.uT.value = (performance.now() % 1000) / 1000;
   composer.render();
   fpsAcc += raw; fpsN++; if (fpsAcc > 4 && fpsN / fpsAcc < 24 && quality !== 'low' && !Q.has('q') && !window.__warned) { window.__warned = true; const n = $('note'); n.style.display = 'block'; n.textContent = 'Running slowly — try Advanced → Quality → Low'; setTimeout(() => n.style.display = 'none', 7000); }
   if (!window.__ready) { window.__ready = true; $('lp').style.width = '100%'; $('load').classList.add('done'); }
@@ -183,6 +188,8 @@ function frame() {
 // hooks for headless verification
 window.__sim = (sec) => { for (let i = 0; i < Math.round(sec * 60); i++) step(1 / 60); };
 window.__api = { loco, body, rex, world, camera, controls, setCam, CAMS, frame, state };
+// debug view: target and camera given as [forward, up, right] relative to the animal
+window.__view = (t, c, fov = 36) => { local(t, tgtW); tgtW.y = t[1]; local(c, camera.position); camera.position.y = c[1]; camera.fov = fov; camera.updateProjectionMatrix(); camera.lookAt(tgtW); world.follow(loco.pos); if (dof) dof.focus = camera.position.distanceTo(tgtW); composer.render(); };
 if (Q.has('shot')) { window.__manual = true; window.__paused = true; $('load').style.display = 'none'; }
 window.__step = () => { window.__sim(+(Q.get('dts') || 0.3)); frame(); };
 frame();

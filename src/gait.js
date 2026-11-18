@@ -10,6 +10,7 @@
 //   * Legs are solved by inverse kinematics for a three-segment digitigrade limb with
 //     toe roll-off; the pelvis drops when a leg would otherwise over-extend.
 import * as THREE from 'three';
+import { groundHeight } from './terrain.js';
 
 const G = 9.81, DEG = Math.PI / 180;
 const V3 = THREE.Vector3, Q4 = THREE.Quaternion;
@@ -38,7 +39,7 @@ export class Locomotion {
     this.pelvis = rex.bone('pelvis');
     this.pos = new V3(); this.quat = new Q4(); this.heading = new V3(1, 0, 0); this.right = new V3(0, 0, 1); this.qPath = new Q4();
     this.com = new V3(); this.dyn = { dx: 0, dy: 0, dz: 0, pitch: 0, yaw: 0, roll: 0, ay: 0 };
-    this.onFootfall = null; this.walk = 0; this.drop = 0;
+    this.onFootfall = null; this.walk = 0; this.drop = 0; this.gY = 0;
     this.feet = [-1, 1].map((s, i) => this.#mkFoot(s, i ? 'R' : 'L', i * 0.5, lm));
     this.coef = {}; for (const k of ['y', 'x', 'z', 'p']) this.coef[k] = { a: new Float32Array(NH + 1), b: new Float32Array(NH + 1) };
     this.tab = { ay: new Float32Array(NT), ax: new Float32Array(NT), zc: new Float32Array(NT) };
@@ -111,7 +112,7 @@ export class Locomotion {
   }
   #touchdown(ft, S, out) {
     const O = t1, T = t2, Rt = t3, yaw = this.#frame(S, O, T, Rt), p = this.p;
-    out.copy(O).addScaledVector(T, p.atd + 0.337).addScaledVector(Rt, ft.s * p.w); out.y = 0.085;
+    out.copy(O).addScaledVector(T, p.atd + 0.337).addScaledVector(Rt, ft.s * p.w); out.y = groundHeight(out.x, out.z) + 0.085;
     return yaw + ft.s * -2 * DEG;
   }
   #initFeet() {
@@ -145,7 +146,7 @@ export class Locomotion {
     d.roll = 1.6 * DEG * Math.sin(2 * Math.PI * (ph - 0.08)) * w + Math.atan(v * v / (G * this.R));
     const yaw = this.#frame(this.S);
     this.qPath.setFromAxisAngle(UP, yaw);
-    this.com.copy(this.O).addScaledVector(this.heading, d.dx).addScaledVector(this.right, d.dz); this.com.y = p.hip + this.comOff.y + d.dy;
+    this.com.copy(this.O).addScaledVector(this.heading, d.dx).addScaledVector(this.right, d.dz); this.gY += (groundHeight(this.com.x, this.com.z) - this.gY) * Math.min(1, dt * 2.5); this.com.y = p.hip + this.comOff.y + d.dy + this.gY;
     const q = this.quat.copy(this.qPath);
     q.multiply(t1q.setFromAxisAngle(UP, d.yaw)).multiply(t1q.setFromAxisAngle(AZ, d.pitch)).multiply(t1q.setFromAxisAngle(AX, d.roll));
     this.pos.copy(this.comOff).applyQuaternion(q).negate().add(this.com);
@@ -154,7 +155,7 @@ export class Locomotion {
     for (const ft of this.feet) {
       const pf = frac(ph - ft.off), wasStance = ft.stance; ft.stance = pf < p.beta || v === 0 && wasStance;
       if (ft.stance) {
-        if (!wasStance) { ft.plant.T.copy(ft.Tw); ft.plant.T.y = 0.085; ft.plant.yaw = ft.yaw; if (this.onFootfall) this.onFootfall(ft, p); }
+        if (!wasStance) { ft.plant.T.copy(ft.Tw); ft.plant.T.y = groundHeight(ft.Tw.x, ft.Tw.z) + 0.085; ft.plant.yaw = ft.yaw; if (this.onFootfall) this.onFootfall(ft, p); }
         ft.s = Math.min(1, pf / p.beta); ft.u = 0;
         ft.Tw.copy(ft.plant.T); ft.yaw = ft.plant.yaw;
         ft.thD = (58 * Math.pow(sst(0.6, 1, ft.s), 1.15) - 5 * (1 - sst(0, 0.07, ft.s))) * DEG * w;
@@ -166,7 +167,7 @@ export class Locomotion {
         ft.u = (pf - p.beta) / (1 - p.beta); ft.s = 1; ft.Fy = 0;
         const tRem = (1 - ft.u) * (1 - p.beta) * p.T; ft.tgtYaw = this.#touchdown(ft, this.S + v * tRem, ft.tgt);
         const e = ft.u * ft.u * ft.u * (ft.u * (ft.u * 6 - 15) + 10);
-        ft.Tw.lerpVectors(ft.lift, ft.tgt, e); ft.Tw.y = 0.085 + p.clear * Math.pow(Math.sin(Math.PI * Math.pow(ft.u, 0.85)), 1.3) * w;
+        ft.Tw.lerpVectors(ft.lift, ft.tgt, e); ft.Tw.y += p.clear * Math.pow(Math.sin(Math.PI * Math.pow(ft.u, 0.85)), 1.3) * w;
         ft.yaw = ft.liftYaw + (ft.tgtYaw - ft.liftYaw) * e;
         ft.thD = kf(ft.u, [[0, 58], [0.16, 72], [0.7, 4], [0.9, -9], [1, -5]]) * DEG;
         ft.psi = kf(ft.u, [[0, 46], [0.2, 64], [0.82, -31], [1, -31]]) * DEG;
@@ -214,7 +215,7 @@ export class Locomotion {
       }
       // ground reaction force vector and centre of pressure
       const yv = this.com.y + this.dvpp;
-      ft.cop.copy(ft.Mw).addScaledVector(ft.fwd, this.cop(ft.s)); ft.cop.y = 0;
+      ft.cop.copy(ft.Mw).addScaledVector(ft.fwd, this.cop(ft.s)); ft.cop.y = ft.plant.T.y - 0.085;
       if (ft.Fy > 0) { ft.F.copy(this.com).sub(ft.cop); ft.F.y = 0; ft.F.multiplyScalar(ft.Fy / yv * w); ft.F.y = ft.Fy; } else ft.F.set(0, 0, 0);
       ft.load = ft.Fy / (this.mass * G);
     }
