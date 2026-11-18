@@ -28,7 +28,7 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 
 **Strike and feed.** *Strike & feed* stops the animal, drops the trunk and neck in a fast ventral strike onto a carcass, tears with lateral head shakes, then lifts and feeds inertially — the head jerks back, the jaws release the piece and close over it further in — followed by a swallow. The sequence illustrates the behaviours Snively & Russell (2007) found the neck muscles capable of; the timings are illustrative, not fitted.
 
-**Skeleton.** The *Skeleton* view strips the animal to its bones — skull with its openings, 10 cervical, 13 dorsal, 5 sacral and 40 caudal vertebrae with spines and chevrons, ribs and gastralia, pelvis, limbs and digits — carried by the same joints and the same simulation, with the flesh as a faint outline.
+**Skeleton.** The *Skeleton* view strips the animal to its bones, carried by the same joints and the same simulation, with the flesh as a faint outline. The skull is a shell of bone on the living head's outline with its windows cut to their real shapes (keyhole orbit, antorbital and maxillary fenestrae, naris, waisted lateral temporal fenestra, supratemporal fenestrae) and its margins at the tooth sockets, so the crowns that the lips cover in life are exposed. Behind it: atlas–axis and eight cervicals with backswept ribs, 13 dorsals with double-headed ribs, five fused sacrals between long low ilia, 40 caudals with chevrons, gastralia, furcula, a pubis ending in its boot, femora with inturned heads and fourth trochanters, tibiae with cnemial crests, a pinched middle metatarsal, toes of 3, 4 and 5 phalanges, and two-fingered hands. The surface is shaded as prepared fossil bone — mineral-stained, worn pale where exposed, dark in the recesses, finely cracked.
 
 **Skin.** The hide is its own simulated layer rather than paint on the muscle. A 10,900-vertex sheet covers the body and is solved every frame with position-based dynamics: each point is tied to the fascia underneath by a spring whose stiffness depends on how loose the skin is there (tight over the skull, shins and limb folds; loose on the throat, belly and flanks), it can lift off but not sink in, its edges resist stretch but go slack in compression, and gravity acts on it. So the skin lags and slides over the moving muscle, the dewlap and belly hang and sway, and where the sheet is compressed — inside of a bending neck, behind the thigh — the shader raises wrinkles from the measured strain, while stretched skin smooths out.
 
@@ -62,7 +62,7 @@ Quality tiers: **high** loads the 386k-triangle mesh with 4K textures (about 20 
 - Mass for force read-outs is 9.5 t (mesh volume 11.4 m³ at density 0.83); published estimates for this specimen run from about 8.4 to 9.5 t, with fleshier models higher.
 - Bone stress is a beam estimate with fixed moment arms and a fixed share (0.3) of uncancelled bending; trust the trend with speed and duty factor, not the absolute number.
 - Integument is scaly throughout, the majority reading of the skin patches; a sparse dorsal covering of filaments cannot be excluded and is not modelled.
-- The skeleton is built from simple volumes: proportions and counts are right, individual bone shapes are schematic.
+- The skeleton is sculpted from implicit volumes, not scanned: element counts, proportions and the main landmarks of each bone are right, but fine osteology (sutures, foramina, individual vertebral laminae, tooth-by-tooth variation) is not.
 - The plants are a loose nod to the Hell Creek flora. The setting is a real-time scene with one sun, a shadow map and image-based sky light — not a path-traced render.
 
 ## Layout
@@ -100,6 +100,14 @@ The real-time view uses one shadow-mapped sun and image-based sky light. For sti
 node tools/export.mjs out/pose 9 -0.3 1.3            # sim seconds, gaze yaw, speed
 HEIGHT_OUT=out/height.png node --max-old-space-size=6500 tools/build-rex.mjs hi 4096   # also writes the fine-relief height map
 python tools/render_cycles.py out/pose assets out/height.png out/rex --views side,rear,hero,legs --res 1600x900 --samples 72 --haze 0.003 --sun 15
+```
+
+For the skeleton, build a finer copy and render it lit like a museum specimen:
+
+```
+node --max-old-space-size=6500 tools/build-rex.mjs skel 0.009 skeleton-hi
+SKEL=skeleton-hi node tools/export.mjs out/pose 9 -0.25 1.3
+python tools/render_cycles.py out/pose assets out/height.png out/rex --mode skeleton --views sk_skull,sk_full,sk_front,sk_chest --res 1600x900 --samples 96 --ev -1.5 --look med
 ```
 
 The exporter evaluates the full deformation chain on the CPU (skinning, muscle bulge, soft-tissue lattice, simulated skin) so the offline mesh is exactly the animal the app draws. Cycles then supplies physical sun and sky, soft shadows, bounce light, subsurface scattering in the skin, refraction in the eyes and the standing water, haze, and a real lens aperture. Not included: motion blur (one instant is exported) and hair-fine geometric wrinkles.

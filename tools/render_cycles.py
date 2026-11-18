@@ -8,7 +8,7 @@ from mathutils import Vector, Matrix
 
 a = sys.argv[1:]
 EXP, ASSETS, HEIGHT, OUT = a[0], a[1], a[2], a[3]
-opt = {'views': 'hero', 'res': '1280x720', 'samples': '96', 'exposure': 'auto', 'sss': '1', 'dof': '1', 'threads': '2', 'haze': '0', 'sun': '', 'elev': '', 'crop': '', 'ev': '0', 'look': 'base'}
+opt = {'views': 'hero', 'res': '1280x720', 'samples': '96', 'exposure': 'auto', 'sss': '1', 'dof': '1', 'threads': '2', 'haze': '0', 'sun': '', 'elev': '', 'crop': '', 'ev': '0', 'look': 'base', 'mode': 'animal'}
 for i in range(4, len(a) - 1, 2): opt[a[i].lstrip('-')] = a[i + 1]
 S = json.load(open(os.path.join(EXP, 'scene.json')))
 if opt['elev']: S['sunElev'] = float(opt['elev'])
@@ -156,6 +156,53 @@ def build_body():
             bm = bmesh.new(); bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=r); me3 = bpy.data.meshes.new('%s%d' % (nm, k)); bm.to_mesh(me3); bm.free(); me3.polygons.foreach_set('use_smooth', np.ones(len(me3.polygons), dtype=bool))
             M = Matrix((X.normalized(), Y.normalized(), Z.normalized())).transposed().to_4x4(); M.translation = Cc; add_obj('%s%d' % (nm, k), me3, mat, M)
 
+# ------------------------------------------------------------------ skeleton, lit like a museum specimen
+def build_skeleton():
+    K = S['skeleton']; pos = conv(arr('skel_pos', 3)); me = make_mesh('bones', pos, arr('skel_index'), attrs={'open': ('FLOAT', arr('skel_open') / 255.0), 'rest': ('FLOAT_VECTOR', conv(arr('skel_rest', 3)))})
+    log('skeleton', len(pos), 'vertices')
+    g = NT('bone'); P = g.n('ShaderNodeAttribute', attribute_name='rest').outputs[1]; opn = g.ramp(g.n('ShaderNodeAttribute', attribute_name='open').outputs[2], 0.15, 0.85)
+    big, mid, fine = g.noise(P, 2.4, 4, 0.55), g.noise(P, 12.0, 5, 0.6), g.noise(P, 75.0, 6, 0.65)
+    pit = g.n('ShaderNodeTexVoronoi', feature='F1'); g.set(pit.inputs['Vector'], P); pit.inputs['Scale'].default_value = 260.0
+    crk = g.n('ShaderNodeTexVoronoi', feature='DISTANCE_TO_EDGE'); wob = g.n('ShaderNodeTexNoise'); g.set(wob.inputs['Vector'], P); wob.inputs['Scale'].default_value = 5.0; g.set(crk.inputs['Vector'], g.vm('ADD', P, g.vm('SCALE', wob.outputs['Color'], scale=0.12))); crk.inputs['Scale'].default_value = 7.0
+    crack = g.m('MULTIPLY', g.ramp(crk.outputs['Distance'], 0.0, 0.012, 1.0, 0.0), g.ramp(g.noise(P, 1.4, 2), 0.42, 0.6))
+    grain = g.n('ShaderNodeTexNoise'); mp = g.n('ShaderNodeMapping'); mp.inputs['Scale'].default_value = (30, 160, 160); g.set(mp.inputs['Vector'], P); g.set(grain.inputs['Vector'], mp.outputs[0]); grain.inputs['Scale'].default_value = 1.0; grain.inputs['Detail'].default_value = 3.0
+    col = g.mix(g.ramp(g.m('ADD', g.m('MULTIPLY', mid, 0.6), g.m('MULTIPLY', big, 0.4)), 0.3, 0.7), (0.045, 0.027, 0.017), (0.15, 0.098, 0.06))
+    col = g.mix(g.m('MULTIPLY', g.ramp(big, 0.56, 0.78), 0.65), col, (0.028, 0.022, 0.02))                                   # manganese staining
+    col = g.mix(g.m('MULTIPLY', g.m('MULTIPLY', opn, opn), g.m('MULTIPLY', g.ramp(fine, 0.4, 0.7), 0.4)), col, (0.27, 0.20, 0.135))   # wear where the surface is exposed
+    col = g.mix(g.m('MULTIPLY', g.m('SUBTRACT', 1.0, opn), 0.55), col, (0.03, 0.022, 0.016))                               # matrix and dust left in the recesses
+    col = g.mix(g.m('MULTIPLY', crack, 0.7), col, (0.012, 0.009, 0.007))
+    h = g.m('ADD', g.m('ADD', g.m('MULTIPLY', fine, 0.0018), g.m('MULTIPLY', grain.outputs[0], 0.0007)), g.m('ADD', g.m('MULTIPLY', g.ramp(pit.outputs['Distance'], 0.0, 0.35, -1.0, 0.0), 0.0006), g.m('MULTIPLY', crack, -0.0025)))
+    bump = g.n('ShaderNodeBump'); bump.inputs['Distance'].default_value = 1.0; g.set(bump.inputs['Height'], h)
+    rough = g.m('ADD', g.m('MULTIPLY_ADD', fine, 0.3, 0.42), g.m('MULTIPLY', crack, 0.2), clamp=True)
+    pb = g.principled(**{'Base Color': col, 'Roughness': rough, 'IOR': 1.5, 'Normal': bump.outputs[0]})
+    try: pb.inputs['Coat Weight'].default_value = 0.2; pb.inputs['Coat Roughness'].default_value = 0.35      # consolidant on prepared fossil bone
+    except Exception: pass
+    add_obj('bones', me, g.finish(pb.outputs[0]))
+    for k, R in enumerate(S['rigid']):
+        if R['kind'] != 'teeth': continue
+        me2 = make_mesh('teeth%d' % k, conv(arr(R['pos'], 3)), arr(R['index']), attrs={'col': ('FLOAT_VECTOR', arr(R['color'], 3))}); g2 = NT('tooth%d' % k)
+        cs = g2.n('ShaderNodeSeparateXYZ'); g2.set(cs.inputs[0], g2.n('ShaderNodeAttribute', attribute_name='col').outputs[1]); Pg = g2.n('ShaderNodeNewGeometry').outputs['Position']
+        c = g2.mix(g2.ramp(cs.outputs[0], 0.3, 0.8), (0.16, 0.10, 0.06), g2.mix(g2.noise(Pg, 40.0, 3), (0.035, 0.022, 0.015), (0.11, 0.07, 0.04)))   # dark fossil enamel, paler root
+        p2 = g2.principled(**{'Base Color': c, 'Roughness': 0.22, 'IOR': 1.6})
+        try: p2.inputs['Coat Weight'].default_value = 0.5; p2.inputs['Coat Roughness'].default_value = 0.1
+        except Exception: pass
+        add_obj('teeth%d' % k, me2, g2.finish(p2.outputs[0]))
+    return float(pos[:, 2].min())
+
+def build_studio(floor_z):
+    O, Hd, Rt = [np.array(S[k]) for k in ('origin', 'heading', 'right')]
+    w = lambda q: Vector(conv(O + Hd * q[0] + Rt * q[2] + np.array([0, q[1], 0]))[0])
+    bm = bmesh.new(); bmesh.ops.create_circle(bm, cap_ends=True, segments=64, radius=60); mf = bpy.data.meshes.new('floor'); bm.to_mesh(mf); bm.free()
+    g = NT('floor'); Pg = g.n('ShaderNodeNewGeometry').outputs['Position']; add_obj('floor', mf, g.finish(g.principled(**{'Base Color': (0.01, 0.01, 0.011, 1), 'Roughness': g.m('MULTIPLY_ADD', g.noise(Pg, 3.0, 4), 0.2, 0.5)}).outputs[0]), Matrix.Translation((w((0, 0, 0)).x, w((0, 0, 0)).y, floor_z - 0.004)))
+    wd = bpy.data.worlds.new('studio'); scene.world = wd; wd.use_nodes = True; wd.node_tree.nodes['Background'].inputs[0].default_value = (0.004, 0.0045, 0.006, 1)
+    def lamp(name, at, to, size, power, color):
+        L = bpy.data.lights.new(name, 'AREA'); L.shape = 'DISK'; L.size = size; L.energy = power; L.color = color; o = bpy.data.objects.new(name, L); scene.collection.objects.link(o)
+        a_, b_ = w(at), w(to); o.location = a_; o.rotation_euler = (b_ - a_).to_track_quat('-Z', 'Y').to_euler()
+    lamp('key', (7.5, 8.0, 7.0), (1.5, 2.4, 0), 5.0, 26000, (1.0, 0.93, 0.82))          # warm key from the front, above, on the camera's side
+    lamp('rim', (-7.0, 5.5, -7.5), (0.5, 2.6, 0), 6.0, 20000, (0.72, 0.84, 1.0))        # cool rim from behind on the far side
+    lamp('fill', (2.0, 1.5, 12.0), (1.0, 2.2, 0), 9.0, 2200, (0.9, 0.95, 1.0))
+    lamp('top', (-3.0, 11.0, 1.0), (-2.5, 2.5, 0), 7.0, 9000, (1.0, 0.97, 0.92))
+
 # ------------------------------------------------------------------ world
 def build_world():
     wy = S['waterY']
@@ -262,21 +309,30 @@ VIEWS = {
     'flank': dict(tgt=(0.3, 1.9, 0.0), cam=(3.4, 1.15, 7.2), lens=40, f=4.0),
     'low':   dict(tgt=(2.6, 2.9, 0.0), cam=(10.5, 0.35, 3.2), lens=28, f=4.0),
     'side':  dict(tgt=(-0.4, 2.3, 0.0), cam=(0.8, 1.7, 17.0), lens=50, f=2.8),
+    'sk_full': dict(tgt=(-0.9, 1.75, 0.0), cam=(1.6, 1.7, 15.5), lens=50, f=5.6),
+    'sk_skull': dict(head=True, tgt=(0.38, -0.2, 0.0), cam=(1.9, -0.15, 3.3), lens=85, f=8.0),
+    'sk_chest': dict(tgt=(1.6, 2.75, 0.0), cam=(4.6, 2.5, 5.4), lens=50, f=5.6),
+    'sk_front': dict(tgt=(3.2, 2.9, 0.0), cam=(10.5, 1.4, 4.6), lens=50, f=5.6),
     'profile': dict(tgt=(4.5, 3.2, 0.0), cam=(5.3, 2.9, 5.2), lens=85, f=4.0),
     'rear':  dict(tgt=(0.2, 2.4, 0.0), cam=(-9.5, 1.5, 7.5), lens=45, f=2.8),
     'legs':  dict(tgt=(0.4, 1.3, 0.0), cam=(2.6, 0.7, 5.6), lens=45, f=4.0),
 }
 def place(v):
     O, Hd, Rt = [np.array(S[k]) for k in ('origin', 'heading', 'right')]
-    w = lambda q: Vector(conv(O + Hd * q[0] + Rt * q[2] + np.array([0, q[1] - O[1], 0]))[0])
+    if v.get('head'):   # offsets from the point between the eyes, so the framing follows wherever the head is looking
+        E = (np.array(S['eyes'][0]['c']) + np.array(S['eyes'][1]['c'])) / 2; w = lambda q: Vector(conv(E + Hd * q[0] + Rt * q[2] + np.array([0, q[1], 0]))[0])
+    else: w = lambda q: Vector(conv(O + Hd * q[0] + Rt * q[2] + np.array([0, q[1] - O[1], 0]))[0])
     return w(v['tgt']), w(v['cam'])
 
 def main():
     r = scene.render; r.engine = 'CYCLES'; cy = scene.cycles; cy.device = 'CPU'; r.threads_mode = 'FIXED'; r.threads = int(opt['threads'])
-    build_body(); build_world(); sky = build_sky(); log('scene built')
+    studio = opt['mode'] == 'skeleton'
+    if studio: build_studio(build_skeleton())
+    else: build_body(); build_world(); sky = build_sky()
+    log('scene built')
     cy.max_bounces = 8; cy.diffuse_bounces = 3; cy.glossy_bounces = 4; cy.transmission_bounces = 8; cy.transparent_max_bounces = 24; cy.volume_bounces = 0
     cy.sample_clamp_indirect = 8.0; cy.caustics_reflective = False; cy.caustics_refractive = False
-    sun_azimuth_probe(sky)
+    if not studio: sun_azimuth_probe(sky)
     W, H = [int(x) for x in opt['res'].split('x')]; r.resolution_x = W; r.resolution_y = H; r.resolution_percentage = 100
     cy.samples = int(opt['samples']); cy.use_adaptive_sampling = True; cy.adaptive_threshold = 0.015; cy.use_denoising = True
     try: cy.denoiser = 'OPENIMAGEDENOISE'; cy.denoising_input_passes = 'RGB_ALBEDO_NORMAL'

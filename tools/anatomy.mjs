@@ -310,10 +310,12 @@ landmarks.musclePaths = {
 
 // ================= SKELETON (for the stripped-down view) =================
 // The bones themselves, as their own set of volumes on the same joints: built by `node tools/build-rex.mjs skel`.
-// Counts follow the mounted skeleton: 9 cervicals + atlas, 13 dorsals, 5 sacrals, ~40 caudals, 12 pairs of dorsal ribs, gastralia.
+// Counts and proportions follow the mounted skeleton (FMNH PR 2081): atlas-axis + 8 cervicals with long backswept ribs, 13 dorsals
+// with double-headed ribs, 5 fused sacrals under the ilia, 40 caudals with chevrons, gastralia, furcula, an arctometatarsalian foot
+// with a 2-3-4-5 phalangeal formula, a two-fingered hand, and a skull whose openings are cut to their real outlines.
 const nBody = prims.length;
 {
-  const K = 0.012, rigid = (bn, o = {}) => ({ bones: [bn], k: K, ...o });
+  const K = 0.012, KB = 0.022, rigid = (bn, o = {}) => ({ bones: [bn], k: K, ...o });
   // vertebral axis: the joint chain, dropped to the level of the centra
   const ax = [];
   for (let i = 12; i >= 0; i--) ax.push({ p: [tailX[i], tailY[i], 0], b: 'tail' + Math.min(12, i + 1) });
@@ -323,84 +325,119 @@ const nBody = prims.length;
   const at = (s) => { let i = 1; while (i < ax.length - 1 && cum[i] < s) i++; const f = Math.min(1, Math.max(0, (s - cum[i - 1]) / (cum[i] - cum[i - 1]))), a = ax[i - 1], b = ax[i];
     const t = [b.p[0] - a.p[0], b.p[1] - a.p[1], 0], tl = Math.hypot(t[0], t[1]); return { p: [a.p[0] + t[0] * f, a.p[1] + t[1] * f, 0], t: [t[0] / tl, t[1] / tl, 0], n: [-t[1] / tl, t[0] / tl, 0], bone: f < 0.5 ? a.b : b.b }; };
   const sOf = (x) => { for (let i = 1; i < ax.length; i++) if (ax[i].p[0] >= x) return cum[i - 1] + (cum[i] - cum[i - 1]) * (x - ax[i - 1].p[0]) / (ax[i].p[0] - ax[i - 1].p[0]); return cum[cum.length - 1]; };
-  const along = (q, d) => [q.p[0] + q.t[0] * d, q.p[1] + q.t[1] * d, 0], up = (q, d, z = 0) => [q.p[0] + q.n[0] * d, q.p[1] + q.n[1] * d, z];
+  // point in a vertebra's own frame: a along the column, u toward dorsal, z lateral
+  const V = (q, a, u, z = 0) => [q.p[0] + q.t[0] * a + q.n[0] * u, q.p[1] + q.t[1] * a + q.n[1] * u, z];
   // torso cross-section (centre height, half-width, half-height) for hanging the ribs
   const TOR = [[-0.30, 2.96, 0.47, 0.68], [0.15, 2.88, 0.53, 0.75], [0.70, 2.78, 0.63, 0.83], [1.30, 2.76, 0.75, 0.85], [1.90, 2.82, 0.73, 0.80], [2.45, 2.94, 0.63, 0.72], [2.86, 3.10, 0.55, 0.64]];
   const tor = (x) => { let i = 1; while (i < TOR.length - 1 && TOR[i][0] < x) i++; const a = TOR[i - 1], b = TOR[i], f = Math.min(1, Math.max(0, (x - a[0]) / (b[0] - a[0]))); return [1, 2, 3].map(c => a[c] + (b[c] - a[c]) * f); };
-  const vert = (s, len, o) => {   // one vertebra: centrum, neural spine, transverse processes, optional chevron
-    const q = at(s), B1 = rigid(q.bone);
-    cap(along(q, -len * 0.42), along(q, len * 0.42), o.rc, o.rc, { ...B1, capA: o.rc * 0.35, capB: o.rc * 0.35 });
-    if (o.spine > 0.02) cap(up(q, o.rc * 0.7), [q.p[0] + q.n[0] * (o.rc + o.spine) - q.t[0] * o.lean, q.p[1] + q.n[1] * (o.rc + o.spine) - q.t[1] * o.lean, 0], [0.017, len * 0.36], [0.02, len * 0.30], { ...B1, up: q.t });
-    if (o.tp > 0.03) sides(sd => cap(up(q, o.rc * 0.55, 0.03 * sd), up(q, o.rc * 0.55 + o.tpUp, o.tp * sd), 0.024, 0.017, B1));
-    if (o.chev > 0.03) { const c0 = up(q, -o.rc * 0.8), d1 = -len * 0.5, d2 = -len * 0.5 - o.chev * 0.45; cap([c0[0] + q.t[0] * d1, c0[1] + q.t[1] * d1, 0], [q.p[0] - q.n[0] * (o.rc * 0.8 + o.chev) + q.t[0] * d2, q.p[1] - q.n[1] * (o.rc * 0.8 + o.chev) + q.t[1] * d2, 0], [0.014, 0.022], [0.012, 0.016], { ...B1, up: q.t }); }
+  // one vertebra: spool-shaped centrum, neural arch, spine with a thickened table, zygapophyses, transverse processes, chevron
+  const vert = (s, len, o) => {
+    const q = at(s), B1 = rigid(q.bone), rc = o.rc, hl = len * 0.43;
+    cap(V(q, -hl, 0), V(q, hl, 0), [rc * (o.wide || 1), rc], [rc * (o.wide || 1), rc], { ...B1, rm: [rc * 0.8 * (o.wide || 1), rc * 0.78], capA: rc * 0.22, capB: rc * 0.22 });
+    if (o.spine > 0.02) {
+      ell(V(q, 0, rc * 0.95), [len * 0.34, rc * 0.42, rc * 0.5], { ...B1, k: KB, axis: q.t, up: q.n });                                   // neural arch
+      cap(V(q, -o.lean * 0.3, rc * 1.1), V(q, -o.lean, rc + o.spine), [0.016, len * 0.30], [0.024, len * (o.table || 0.33)], { ...B1, up: q.t, k: KB });
+      if (len > 0.09) sides(sd => { cap(V(q, len * 0.1, rc * 1.15, 0.03 * sd), V(q, len * 0.52, rc * 1.32, 0.055 * sd), 0.02, 0.016, { ...B1, k: KB }); cap(V(q, -len * 0.1, rc * 1.2, 0.03 * sd), V(q, -len * 0.5, rc * 1.4, 0.045 * sd), 0.02, 0.015, { ...B1, k: KB }); });
+    }
+    if (o.tp > 0.03) sides(sd => cap(V(q, 0, rc * 0.75, 0.035 * sd), V(q, -o.tp * (o.tpBack || 0.15), rc * 0.75 + o.tpUp, o.tp * sd), [0.03, 0.02], [0.022, 0.014], { ...B1, up: q.t, k: KB }));
+    if (o.chev > 0.03) sides(sd => chain([{ p: V(q, -hl, -rc * 0.7, 0.03 * sd), r: 0.013, b: q.bone }, { p: V(q, -hl - o.chev * 0.12, -rc * 0.7 - o.chev * 0.3, 0.012 * sd), r: 0.014, b: q.bone }, { p: V(q, -hl - o.chev * 0.5, -rc * 0.7 - o.chev, 0), r: [0.011, 0.02], b: q.bone }], { k: K, up: q.t }));
     return q;
   };
   // caudals: long and stout at the base, dwindling to rods at the tip
   { const s0 = 0, s1 = sOf(-0.52), N = 40; let acc = 0; const wts = Array.from({ length: N }, (_, i) => 0.42 + 0.58 * (i / (N - 1))), tot = wts.reduce((a, b) => a + b, 0);
     for (let i = 0; i < N; i++) { const len = (s1 - s0) * wts[i] / tot, u = i / (N - 1), s = s0 + acc + len / 2; acc += len;
-      vert(s, len, { rc: 0.014 + 0.082 * Math.pow(u, 1.15), spine: 0.30 * Math.pow(u, 1.5), lean: 0.05 * u, tp: u > 0.62 ? 0.22 * (u - 0.62) / 0.38 + 0.03 : 0, tpUp: 0, chev: i > 2 && i < N - 2 ? 0.05 + 0.27 * Math.pow(u, 1.3) : 0 }); } }
-  // sacrals (fused under the ilia), dorsals with ribs, cervicals with short ribs
-  { const a = sOf(-0.52), b = sOf(0.38); for (let i = 0; i < 5; i++) vert(a + (b - a) * (i + 0.5) / 5, (b - a) / 5, { rc: 0.10, spine: 0.30, lean: 0.02, tp: 0.15, tpUp: 0.02, chev: 0 }); }
+      vert(s, len, { rc: 0.014 + 0.082 * Math.pow(u, 1.15), spine: 0.30 * Math.pow(u, 1.5), lean: 0.06 * u, tp: u > 0.6 ? 0.24 * (u - 0.6) / 0.4 + 0.03 : 0, tpUp: 0.0, tpBack: 0.35, chev: i > 2 && i < N - 2 ? 0.05 + 0.28 * Math.pow(u, 1.3) : 0 }); } }
+  // sacrals: five centra fused, their spines joined into one plate between the ilia
+  { const a = sOf(-0.52), b = sOf(0.38); for (let i = 0; i < 5; i++) { const q = vert(a + (b - a) * (i + 0.5) / 5, (b - a) / 5, { rc: 0.105, spine: 0.31, lean: 0.02, table: 0.5, tp: 0, chev: 0 });
+      sides(sd => cap(V(q, 0, 0.04, 0.05 * sd), V(q, 0, 0.1, 0.17 * sd), [0.05, 0.035], [0.06, 0.045], rigid('pelvis', { up: q.t, k: KB }))); } }
+  // dorsals with double-headed ribs
   { const a = sOf(0.38), b = sOf(2.80), N = 13;
-    for (let i = 0; i < N; i++) { const len = (b - a) / N, q = vert(a + len * (i + 0.5), len, { rc: 0.098 - 0.008 * (i / N), spine: 0.29 - 0.05 * (i / N), lean: 0.03, tp: 0.15, tpUp: 0.04, chev: 0 });
-      if (i === 0) continue;                                                    // the first dorsal behind the hips carries no long rib
-      const x = q.p[0], [cy, w, h] = tor(x), ends = i < 2 ? -0.1 : i > N - 3 ? -0.55 : -1.12, y0 = q.p[1] + 0.03;
-      sides(sd => { const st = [{ p: [x, y0, 0.09 * sd], r: 0.03, b: q.bone }, { p: [x - 0.02, y0 + 0.03, 0.2 * sd], r: 0.028, b: q.bone }];
-        for (let j = 1; j <= 6; j++) { const th = 0.62 + (ends - 0.62) * j / 6, yy = cy + 0.9 * h * Math.sin(th), zz = 0.92 * w * Math.cos(th); if (yy > y0 + 0.02 && zz < 0.3) continue; st.push({ p: [x - 0.03 - 0.26 * (j / 6) ** 1.5, Math.min(yy, y0 + 0.02), zz * sd], r: 0.027 - 0.0012 * j, b: q.bone }); }
-        chain(st, { k: K, up: [1, 0, 0] }); }); } }
+    for (let i = 0; i < N; i++) { const len = (b - a) / N, q = vert(a + len * (i + 0.5), len, { rc: 0.10 - 0.008 * (i / N), spine: 0.29 - 0.05 * (i / N), lean: 0.035, table: 0.36, tp: 0.17, tpUp: 0.06, chev: 0 });
+      if (i === 0) continue;                                                    // the last dorsal before the hips carries only a stub
+      const x = q.p[0], [cy, w, h] = tor(x), ends = i < 2 ? -0.15 : i > N - 3 ? -0.6 : -1.15, y0 = q.p[1];
+      sides(sd => { const st = [{ p: [x + 0.01, y0 + 0.02, 0.085 * sd], r: [0.028, 0.03], b: q.bone }, { p: [x - 0.01, y0 + 0.085, 0.17 * sd], r: [0.026, 0.034], b: q.bone }, { p: [x - 0.03, y0 + 0.07, 0.27 * sd], r: [0.02, 0.036], b: q.bone }];
+        for (let j = 1; j <= 7; j++) { const th = 0.55 + (ends - 0.55) * j / 7, yy = cy + 0.9 * h * Math.sin(th), zz = 0.92 * w * Math.cos(th); if (zz < 0.33 && yy > y0) continue; st.push({ p: [x - 0.04 - 0.28 * (j / 7) ** 1.5, Math.min(yy, y0 + 0.05), zz * sd], r: [0.017 - 0.0006 * j, 0.034 - 0.0022 * j], b: q.bone }); }
+        chain(st, { k: K, up: [1, 0, 0] });
+        cap([x + 0.005, y0 - 0.01, 0.07 * sd], [x - 0.005, y0 + 0.06, 0.15 * sd], 0.022, 0.02, rigid(q.bone)); }); } }                                // capitulum reaching down to the centrum
+  // cervicals: atlas-axis at the condyle, then eight with ribs swept back along the neck
   { const a = sOf(2.80), b = cum[cum.length - 1] - 0.03, N = 10;
-    for (let i = 0; i < N; i++) { const len = (b - a) / N; vert(a + len * (i + 0.5), len, { rc: 0.088 - 0.02 * (i / N), spine: i === N - 1 ? 0.05 : 0.17 - 0.06 * (i / N), lean: -0.02, tp: 0.11, tpUp: -0.07, chev: 0 }); } }
-  // gastralia: the belly ribs
-  for (let i = 0; i < 11; i++) { const x = 0.72 + 0.145 * i, [cy, w, h] = tor(x), bn = x < 0.75 ? 'dors1' : x < 1.35 ? 'dors2' : x < 1.95 ? 'dors3' : 'dors4';
-    sides(sd => chain([{ p: [x + 0.07, cy - 0.93 * h, 0], r: 0.019, b: bn }, { p: [x, cy - 0.90 * h, 0.22 * w * sd], r: 0.018, b: bn }, { p: [x - 0.09, cy - 0.78 * h, 0.5 * w * sd], r: 0.015, b: bn }], { k: K })); }
-  // pelvis: ilium blades, pubis with its boot, ischium
+    for (let i = 0; i < N; i++) { const len = (b - a) / N, last = i >= N - 1, q = vert(a + len * (i + 0.5), len, { rc: 0.09 - 0.022 * (i / N), wide: 1.15, spine: last ? 0.04 : 0.18 - 0.07 * (i / N), lean: -0.015, table: 0.3, tp: 0.10, tpUp: -0.05, chev: 0 });
+      if (!last) sides(sd => chain([{ p: V(q, 0.01, -0.03, 0.105 * sd), r: 0.022, b: q.bone }, { p: V(q, -0.08, -0.085, 0.125 * sd), r: 0.016, b: q.bone }, { p: V(q, -0.20 - 0.1 * (1 - i / N), -0.11, 0.12 * sd), r: 0.011, b: q.bone }], { k: K })); } }
+  // gastralia: belly ribs in a herringbone
+  for (let i = 0; i < 15; i++) { const x = 0.70 + 0.105 * i, [cy, w, h] = tor(x), bn = x < 0.75 ? 'dors1' : x < 1.35 ? 'dors2' : x < 1.95 ? 'dors3' : 'dors4';
+    sides(sd => chain([{ p: [x + 0.08, cy - 0.94 * h, 0.0], r: 0.016, b: bn }, { p: [x + 0.02, cy - 0.915 * h, 0.2 * w * sd], r: 0.015, b: bn }, { p: [x - 0.07, cy - 0.83 * h, 0.44 * w * sd], r: 0.013, b: bn }, { p: [x - 0.13, cy - 0.72 * h, 0.58 * w * sd], r: 0.011, b: bn }], { k: K })); }
+  // pelvis: long low ilium blades, pubis ending in its boot, rod-like ischium
   sides(sd => {
-    ell([-0.02, 3.34, 0.165 * sd], [0.76, 0.235, 0.036], rigid('pelvis'));
-    cap([0.10, 3.02, 0.13 * sd], [0.36, 2.10, 0.03 * sd], [0.045, 0.07], [0.04, 0.05], rigid('pelvis', { up: [1, 0, 0] }));
-    cap([-0.16, 3.0, 0.13 * sd], [-0.84, 2.38, 0.035 * sd], [0.04, 0.06], [0.028, 0.035], rigid('pelvis', { up: [1, 0, 0] }));
+    ell([-0.03, 3.385, 0.185 * sd], [0.80, 0.19, 0.03], rigid('pelvis', { k: KB }));
+    ell([0.52, 3.30, 0.185 * sd], [0.26, 0.16, 0.028], rigid('pelvis', { k: 0.05 })); ell([-0.6, 3.34, 0.18 * sd], [0.25, 0.13, 0.028], rigid('pelvis', { k: 0.05 }));   // pre- and postacetabular blades
+    cap([0.12, 3.24, 0.19 * sd], [0.15, 3.03, 0.16 * sd], [0.05, 0.075], [0.045, 0.06], rigid('pelvis', { up: [1, 0, 0], k: KB }));                                     // pubic peduncle
+    cap([-0.14, 3.24, 0.19 * sd], [-0.17, 3.02, 0.16 * sd], [0.045, 0.065], [0.04, 0.05], rigid('pelvis', { up: [1, 0, 0], k: KB }));                                   // ischial peduncle
+    cap([0.15, 3.03, 0.15 * sd], [0.37, 2.10, 0.035 * sd], [0.042, 0.07], [0.036, 0.055], rigid('pelvis', { up: [1, 0, 0], k: KB }));
+    cap([-0.17, 3.02, 0.15 * sd], [-0.86, 2.37, 0.03 * sd], [0.04, 0.065], [0.026, 0.036], rigid('pelvis', { up: [1, 0, 0], k: KB }));
+    cap([-0.36, 2.86, 0.11 * sd], [-0.33, 2.70, 0.08 * sd], [0.02, 0.05], [0.015, 0.03], rigid('pelvis', { up: [1, 0, 0], k: KB }));                                    // obturator process
   });
-  ell([0.42, 2.0, 0], [0.27, 0.06, 0.055], rigid('pelvis'));
+  cap([0.20, 2.02, 0], [0.70, 1.99, 0], [0.05, 0.065], [0.035, 0.04], rigid('pelvis', { k: KB })); ell([0.30, 2.0, 0], [0.16, 0.075, 0.06], rigid('pelvis', { k: KB }));    // pubic boot
+  ell([-0.87, 2.36, 0], [0.06, 0.045, 0.04], rigid('pelvis', { k: KB }));
   sides((sd, S) => {
-    const Pz = p => Z(p, sd), fe = 'femur_' + S, ti = 'tibia_' + S, mt = 'mt_' + S, { H: Hp, K: Kn, A: An } = LEG;
-    // hind limb
-    cap(Pz(Hp), Pz(Kn), 0.10, 0.105, rigid(fe, { rm: 0.07 })); ell(Pz([Hp[0] - 0.02, Hp[1] + 0.02, Hp[2] - 0.09]), [0.085, 0.085, 0.085], rigid(fe)); ell(Pz([Hp[0] + 0.06, Hp[1] - 0.02, Hp[2] + 0.05]), [0.07, 0.11, 0.05], rigid(fe));
-    cap(Pz([Kn[0] - 0.03, Kn[1] - 0.02, Kn[2] - 0.02]), Pz(An), 0.105, 0.085, rigid(ti, { rm: 0.058 })); cap(Pz([Kn[0] + 0.07, Kn[1] - 0.08, Kn[2]]), Pz([Kn[0] + 0.05, Kn[1] - 0.36, Kn[2]]), [0.03, 0.06], [0.025, 0.03], rigid(ti, { up: [1, 0, 0] }));   // cnemial crest
-    cap(Pz([Kn[0] - 0.05, Kn[1] - 0.05, Kn[2] + 0.105]), Pz([An[0] - 0.01, An[1] + 0.06, An[2] + 0.075]), 0.04, 0.02, rigid(ti));                                       // fibula
-    ell(Pz(An), [0.075, 0.08, 0.10], rigid(mt));
-    for (const [d, dz] of [['d2', -0.05], ['d3', 0], ['d4', 0.05]]) { const base = DIG[d][0];
-      cap(Pz([An[0] + 0.01, An[1] - 0.04, An[2] + dz]), Pz([base[0] - 0.03, base[1] + 0.035, base[2]]), 0.047, 0.05, rigid(mt, { rm: 0.036 }));
-      cap(Pz([base[0], base[1] + 0.01, base[2]]), Pz([DIG[d][1][0], DIG[d][1][1] + 0.01, DIG[d][1][2]]), 0.044, 0.04, rigid(d + 'a_' + S, { rm: 0.03 }));
-      cap(Pz([DIG[d][1][0], DIG[d][1][1] + 0.01, DIG[d][1][2]]), Pz([DIG[d][2][0], DIG[d][2][1] + 0.01, DIG[d][2][2]]), 0.04, 0.035, rigid(d + 'b_' + S, { rm: 0.027 }));
-      cap(Pz([DIG[d][2][0], DIG[d][2][1] + 0.012, DIG[d][2][2]]), Pz(DIG[d][3]), [0.022, 0.034], [0.006, 0.008], rigid(d + 'b_' + S)); }
+    const Pz = p => Z(p, sd), fe = 'femur_' + S, ti = 'tibia_' + S, mt = 'mt_' + S, { H: Hp, K: Kn, A: An } = LEG, mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    // femur: inturned head, trochanters, fourth trochanter for the caudofemoralis, paired condyles
+    const fT = [Hp[0] + 0.02, Hp[1] + 0.0, Hp[2] + 0.03];
+    chain([{ p: Pz(fT), r: 0.098, b: fe }, { p: Pz(mix(fT, Kn, 0.3)), r: [0.078, 0.082], b: fe }, { p: Pz([mix(fT, Kn, 0.6)[0] + 0.035, mix(fT, Kn, 0.6)[1], mix(fT, Kn, 0.6)[2]]), r: [0.074, 0.078], b: fe }, { p: Pz([Kn[0], Kn[1] + 0.04, Kn[2]]), r: [0.105, 0.10], b: fe }], { k: KB });
+    ell(Pz([Hp[0] - 0.005, Hp[1] + 0.035, Hp[2] - 0.095]), [0.088, 0.088, 0.088], rigid(fe, { k: 0.035 }));
+    ell(Pz([Hp[0] + 0.06, Hp[1] + 0.04, Hp[2] + 0.07]), [0.06, 0.10, 0.045], rigid(fe, { k: 0.03 })); cap(Pz([Hp[0] + 0.11, Hp[1] - 0.02, Hp[2] + 0.02]), Pz([Hp[0] + 0.13, Hp[1] - 0.2, Hp[2] + 0.03]), [0.02, 0.04], [0.015, 0.02], rigid(fe, { up: [1, 0, 0], k: 0.03 }));
+    ell(Pz([mix(fT, Kn, 0.36)[0] - 0.06, mix(fT, Kn, 0.36)[1], mix(fT, Kn, 0.36)[2] - 0.04]), [0.03, 0.10, 0.03], rigid(fe, { k: 0.04 }));
+    for (const dz of [-0.062, 0.062]) ell(Pz([Kn[0] - 0.035, Kn[1] + 0.005, Kn[2] + dz]), [0.085, 0.08, 0.052], rigid(fe, { k: 0.03 }));
+    // tibia with cnemial crest, fibula, astragalus with its ascending process
+    chain([{ p: Pz([Kn[0] - 0.02, Kn[1] - 0.05, Kn[2]]), r: [0.12, 0.10], b: ti }, { p: Pz(mix(Kn, An, 0.3)), r: [0.066, 0.07], b: ti }, { p: Pz(mix(Kn, An, 0.7)), r: [0.058, 0.055], b: ti }, { p: Pz([An[0], An[1] + 0.06, An[2]]), r: [0.105, 0.06], b: ti }], { k: KB, up: [1, 0, 0] });
+    cap(Pz([Kn[0] + 0.085, Kn[1] - 0.06, Kn[2] - 0.01]), Pz([Kn[0] + 0.03, Kn[1] - 0.42, Kn[2]]), [0.028, 0.07], [0.02, 0.025], rigid(ti, { up: [1, 0, 0], k: 0.035 }));
+    chain([{ p: Pz([Kn[0] - 0.05, Kn[1] - 0.07, Kn[2] + 0.115]), r: [0.035, 0.055], b: ti }, { p: Pz([mix(Kn, An, 0.35)[0] - 0.03, mix(Kn, An, 0.35)[1], mix(Kn, An, 0.35)[2] + 0.085]), r: 0.026, b: ti }, { p: Pz([An[0] - 0.02, An[1] + 0.07, An[2] + 0.085]), r: 0.017, b: ti }], { k: K, up: [1, 0, 0] });
+    ell(Pz([An[0] + 0.01, An[1], An[2]]), [0.065, 0.062, 0.115], rigid(ti, { k: 0.02 })); cap(Pz([An[0] + 0.05, An[1] + 0.03, An[2] - 0.01]), Pz([An[0] + 0.07, An[1] + 0.24, An[2]]), [0.055, 0.014], [0.02, 0.01], rigid(ti, { up: [1, 0, 0], k: 0.02 }));
+    // arctometatarsus: the middle metatarsal pinched to a splint between its neighbours at the top
+    const mtTop = [An[0] + 0.015, An[1] - 0.075, An[2]];
+    for (const [d, dz, r0, r1] of [['d2', -0.055, 0.05, 0.05], ['d3', 0, 0.02, 0.058], ['d4', 0.055, 0.05, 0.05]]) { const base = DIG[d][0], end = [base[0] - 0.035, base[1] + 0.04, base[2]];
+      chain([{ p: Pz([mtTop[0], mtTop[1], mtTop[2] + dz]), r: r0, b: mt }, { p: Pz(mix([mtTop[0], mtTop[1], mtTop[2] + dz * 0.9], end, 0.5)), r: (r0 + r1) * 0.42, b: mt }, { p: Pz(end), r: r1, b: mt }], { k: K }); }
+    cap(Pz([An[0] - 0.04, An[1] - 0.09, An[2] + 0.09]), Pz([An[0] - 0.01, An[1] - 0.3, An[2] + 0.1]), 0.02, 0.008, rigid(mt));                                             // fifth metatarsal splint
+    chain([{ p: Pz([An[0] + 0.05, An[1] - 0.42, An[2] - 0.08]), r: 0.022, b: mt }, { p: Pz([An[0] - 0.01, An[1] - 0.5, An[2] - 0.13]), r: 0.02, b: mt }, { p: Pz([An[0] - 0.07, An[1] - 0.575, An[2] - 0.16]), r: [0.007, 0.012], b: mt }], { k: K });   // hallux
+    // toes: 3, 4 and 5 phalanges, each waisted between its joints, ending in a hooked ungual
+    const ph = (a, b, n, bn, r) => { for (let j = 0; j < n; j++) { const p0 = mix(a, b, j / n), p1 = mix(a, b, (j + 1) / n); cap(Pz([p0[0], p0[1] + 0.012, p0[2]]), Pz([p1[0], p1[1] + 0.012, p1[2]]), [r * 1.06, r], [r * 0.98, r * 0.9], rigid(bn, { rm: [r * 0.72, r * 0.66], k: 0.006 })); } };
+    for (const [d, n1, n2] of [['d2', 1, 1], ['d3', 1, 2], ['d4', 2, 2]]) { const D = DIG[d], tip = D[3], dir = [tip[0] - D[2][0], 0, tip[2] - D[2][2]];
+      ph(D[0], D[1], n1, d + 'a_' + S, 0.043); ph(D[1], D[2], n2, d + 'b_' + S, 0.037);
+      chain([{ p: Pz([D[2][0], D[2][1] + 0.018, D[2][2]]), r: [0.022, 0.036], b: d + 'b_' + S }, { p: Pz([D[2][0] + dir[0] * 0.5, D[2][1] + 0.022, D[2][2] + dir[2] * 0.5]), r: [0.015, 0.026], b: d + 'b_' + S }, { p: Pz([tip[0], tip[1] - 0.012, tip[2]]), r: [0.004, 0.007], b: d + 'b_' + S }], { k: 0.006 }); }
     // shoulder girdle and arm
     const SH = [2.62, 2.72, 0.50], EL = [2.50, 2.38, 0.58], WR = [2.70, 2.27, 0.53];
-    cap(Pz([2.66, 2.74, 0.50]), Pz([1.78, 3.13, 0.66]), [0.02, 0.085], [0.018, 0.075], rigid('dors4', { rm: [0.018, 0.055], bones: ['dors4', 'dors3'], wt: [0.3, 0.9] }));        // scapula
-    ell(Pz([2.72, 2.58, 0.41]), [0.085, 0.09, 0.022], rigid('dors4'));                                                                                               // coracoid
-    cap(Pz(SH), Pz(EL), 0.05, 0.045, rigid('humerus_' + S, { rm: 0.03 }));
-    cap(Pz([EL[0], EL[1], EL[2] + 0.018]), Pz([WR[0], WR[1], WR[2] + 0.018]), 0.026, 0.022, rigid('forearm_' + S)); cap(Pz([EL[0] - 0.02, EL[1] + 0.02, EL[2] - 0.02]), Pz([WR[0], WR[1], WR[2] - 0.02]), 0.03, 0.022, rigid('forearm_' + S));
+    chain([{ p: Pz([2.67, 2.71, 0.49]), r: [0.03, 0.095], b: 'dors4' }, { p: Pz([2.42, 2.86, 0.585]), r: [0.017, 0.05], b: 'dors4' }, { p: Pz([2.05, 3.03, 0.66]), r: [0.015, 0.055], b: 'dors3' }, { p: Pz([1.66, 3.17, 0.65]), r: [0.014, 0.08], b: 'dors3' }], { k: K });       // scapula
+    ell(Pz([2.74, 2.58, 0.41]), [0.10, 0.105, 0.022], rigid('dors4', { k: KB }));                                                                                    // coracoid
+    chain([{ p: Pz([2.76, 2.70, 0.36]), r: 0.02, b: 'dors4' }, { p: Pz([2.84, 2.52, 0.2]), r: 0.02, b: 'dors4' }, { p: [2.87, 2.43, 0], r: 0.022, b: 'dors4' }], { k: K });                                                         // furcula
+    chain([{ p: Pz(SH), r: 0.05, b: 'humerus_' + S }, { p: Pz(mix(SH, EL, 0.5)), r: 0.029, b: 'humerus_' + S }, { p: Pz(EL), r: 0.045, b: 'humerus_' + S }], { k: K }); ell(Pz([mix(SH, EL, 0.3)[0] + 0.03, mix(SH, EL, 0.3)[1], mix(SH, EL, 0.3)[2]]), [0.02, 0.06, 0.02], rigid('humerus_' + S, { k: 0.02 }));
+    cap(Pz([EL[0], EL[1], EL[2] + 0.02]), Pz([WR[0], WR[1], WR[2] + 0.02]), 0.026, 0.022, rigid('forearm_' + S, { rm: 0.017 })); cap(Pz([EL[0] - 0.03, EL[1] + 0.03, EL[2] - 0.02]), Pz([WR[0], WR[1], WR[2] - 0.02]), 0.032, 0.022, rigid('forearm_' + S, { rm: 0.019 }));
     for (const [o, e, c] of [[[2.72, 2.26, 0.545], [2.95, 2.09, 0.525], [3.01, 2.0, 0.52]], [[2.72, 2.265, 0.505], [2.94, 2.105, 0.445], [2.995, 2.02, 0.435]]]) {
-      cap(Pz(o), Pz(e), 0.022, 0.02, rigid('hand_' + S)); cap(Pz(e), Pz(c), [0.014, 0.022], [0.005, 0.006], rigid('hand_' + S)); }
+      ph(o, e, 2, 'hand_' + S, 0.02); chain([{ p: Pz(e), r: [0.013, 0.022], b: 'hand_' + S }, { p: Pz([mix(e, c, 0.55)[0] + 0.012, mix(e, c, 0.55)[1] + 0.01, mix(e, c, 0.55)[2]]), r: [0.009, 0.016], b: 'hand_' + S }, { p: Pz(c), r: [0.003, 0.005], b: 'hand_' + S }], { k: 0.005 }); }
   });
-  // skull: a shell of bone with its windows, on the same outline as the living head
-  const T = 0.03, shell = (x, y, z) => { const d = skullSDF(x, y, z); return Math.max(d, -(d + T)); };
-  custom(shell, HL(-0.25, -0.75, -0.6).map((v, i) => i === 2 ? -0.62 : v - 0.2), [HL(1.6, 0.4, 0)[0] + 0.1, HL(0, 0.45, 0)[1] + 0.2, 0.62], { ...H, k: K });
-  ell(HL(0.70, -0.30, 0), [0.62, 0.11, 0.30], { ...H, carve: true, k: 0.02 });                              // the palate is mostly open between the tooth rows
-  ell(HL(0.02, -0.02, 0), [0.07, 0.07, 0.07], { ...H, k: K });                                               // occipital condyle
+  // ---- skull: a shell of bone on the living head's outline, its openings cut to their real shapes ----
+  const T = 0.046, shell = (x, y, z) => { const d = skullSDF(x, y, z); return Math.max(d, -(d + T)); };
+  const HB = [HL(-0.25, -0.75, -0.6).map((v, i) => i === 2 ? -0.62 : v - 0.2), [HL(1.6, 0.4, 0)[0] + 0.1, HL(0, 0.45, 0)[1] + 0.2, 0.62]];
+  custom(shell, HB[0], HB[1], { ...H, k: K });
+  // window through one side wall (or the roof) with a rounded-polygon outline given in skull coordinates
+  const sdPoly = (px, py, v) => { let d = 1e9, s = 1; for (let i = 0, j = v.length - 1; i < v.length; j = i, i++) { const ex = v[j][0] - v[i][0], ey = v[j][1] - v[i][1], wx = px - v[i][0], wy = py - v[i][1], t = Math.min(1, Math.max(0, (wx * ex + wy * ey) / (ex * ex + ey * ey))), bx = wx - ex * t, by = wy - ey * t; d = Math.min(d, bx * bx + by * by);
+      const c1 = py >= v[i][1], c2 = py < v[j][1], c3 = ex * wy > ey * wx; if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s; } return s * Math.sqrt(d); };
+  const win = (pts, round, z0, z1, top) => custom((x, y, z) => { const q = toHL(x, y, z), a = top ? Math.abs(q[2]) : q[1], zz = top ? q[1] : Math.abs(q[2]); return Math.max(sdPoly(q[0], a, pts) - round, Math.abs(zz - (z0 + z1) / 2) - (z1 - z0) / 2) * HSC; }, HB[0], HB[1], { ...H, carve: true, k: 0.016 });
+  win([[0.37, 0.15], [0.40, 0.035], [0.385, -0.17], [0.435, -0.17], [0.455, 0.02], [0.51, 0.13]], 0.035, 0.2, 0.6);                                  // orbit: a keyhole, round above and a slot below
+  win([[0.58, 0.115], [0.575, -0.135], [0.80, -0.14], [1.0, -0.085], [0.99, -0.03], [0.74, 0.07]], 0.035, 0.14, 0.6);                            // antorbital fenestra
+  win([[1.075, -0.03], [1.09, -0.075], [1.135, -0.06], [1.12, -0.015]], 0.028, 0.14, 0.6);                                                        // maxillary fenestra
+  win([[1.21, 0.0], [1.24, -0.075], [1.36, -0.105], [1.37, -0.07], [1.29, -0.01]], 0.022, 0.08, 0.6);                                              // bony naris
+  win([[0.10, 0.12], [0.115, 0.0], [0.175, -0.035], [0.13, -0.12], [0.15, -0.25], [0.25, -0.25], [0.27, -0.10], [0.225, -0.03], [0.24, 0.10]], 0.03, 0.22, 0.6);   // lateral temporal fenestra, pinched at the waist
+  win([[0.05, 0.075], [0.07, 0.19], [0.2, 0.2], [0.23, 0.085], [0.14, 0.055]], 0.025, 0.1, 0.6, true);                                             // supratemporal fenestra (in the roof)
+  custom((x, y, z) => { const q = toHL(x, y, z); return Math.max(q[1] + 0.25, 0.37 - q[0]) * HSC; }, HB[0], HB[1], { ...H, carve: true, k: 0.02 });   // the bone ends at the tooth sockets; below that was gum and lip
+  ell(HL(0.74, -0.24, 0), [0.60, 0.07, 0.19], { ...H, carve: true, k: 0.02 });                              // palate open between the tooth rows
+  ell(HL(0.03, -0.06, 0), [0.075, 0.075, 0.075], { ...H, k: K }); ell(HL(0.11, 0.03, 0), [0.15, 0.14, 0.12], { ...H, k: 0.03 });            // occipital condyle, braincase
   sides(s => {
-    chain([{ p: HL(1.24, 0.05, 0.098 * s), r: 0.024, b: 'head' }, { p: HL(0.97, 0.143, 0.112 * s), r: 0.032, b: 'head' }, { p: HL(0.74, 0.22, 0.148 * s), r: 0.04, b: 'head' }, { p: HL(0.58, 0.272, 0.195 * s), r: 0.047, b: 'head' }], { up: hup, k: 0.03 });
-    cap(HL(0.53, 0.238, 0.25 * s), HL(0.33, 0.215, 0.335 * s), 0.04, 0.044, { ...H, k: 0.03 });
-    ell(HL(0.285, 0.236, 0.30 * s), [0.125, 0.042, 0.055], { ...H, k: 0.03 });
-    const cut = (c, r) => ell(HL(c[0], c[1], c[2] * s), r, { ...H, carve: true, k: 0.02 });
-    cut([0.44, 0.10, 0.34], [0.085, 0.105, 0.16]); cut([0.415, -0.07, 0.36], [0.05, 0.11, 0.16]);          // orbit: round above, a slot below
-    cut([0.82, -0.005, 0.30], [0.20, 0.125, 0.16]);                                                      // antorbital fenestra
-    cut([1.08, 0.005, 0.25], [0.045, 0.05, 0.12]);                                                       // maxillary fenestra
-    cut([1.275, -0.05, 0.19], [0.095, 0.05, 0.10]);                                                      // bony naris
-    cut([0.165, 0.06, 0.42], [0.08, 0.10, 0.14]); cut([0.20, -0.15, 0.43], [0.085, 0.11, 0.14]);           // lateral temporal fenestra (waisted)
-    cut([0.13, 0.27, 0.15], [0.105, 0.12, 0.085]);                                                       // supratemporal fenestra
+    chain([{ p: HL(1.24, 0.05, 0.098 * s), r: 0.024, b: 'head' }, { p: HL(0.97, 0.143, 0.112 * s), r: 0.032, b: 'head' }, { p: HL(0.74, 0.22, 0.148 * s), r: 0.04, b: 'head' }, { p: HL(0.58, 0.272, 0.195 * s), r: 0.047, b: 'head' }], { up: hup, k: 0.03 });   // rugose nasals
+    cap(HL(0.53, 0.238, 0.25 * s), HL(0.33, 0.215, 0.335 * s), 0.04, 0.044, { ...H, k: 0.03 }); ell(HL(0.285, 0.236, 0.30 * s), [0.125, 0.042, 0.055], { ...H, k: 0.03 });               // lacrimal and postorbital bosses
+    cap(HL(0.20, -0.2, 0.07 * s), HL(1.05, -0.215, 0.035 * s), 0.026, 0.02, { ...H, k: K }); cap(HL(0.14, -0.24, 0.09 * s), HL(0.07, -0.36, 0.36 * s), [0.02, 0.05], [0.03, 0.06], { ...H, k: KB });     // palate bars, quadrate
     // lower jaw: two deep, thin rami meeting at the chin
-    chain([0.0, 0.18, 0.42, 0.72, 1.02, 1.28, 1.405].map(x => { const t = jTop(x), bt = jBot(x); return { p: HL(x, (t + bt) / 2 - 0.01, Math.max(0.03, jW(x) * 0.93 - 0.035) * s), r: [0.03, Math.max(0.04, (t - bt) / 2 * 0.92)], b: 'jaw' }; }), { up: hup, k: K });
-    ell(HL(0.02, -0.40, 0.39 * s), [0.06, 0.07, 0.06], { bones: ['jaw'], up: hup, axis: hax, k: K });                                // jaw joint
-    ell(HL(0.36, -0.52, 0.35 * s), [0.10, 0.045, 0.06], { bones: ['jaw'], up: hup, axis: hax, carve: true, k: 0.02 });             // surangular window
+    chain([-0.02, 0.18, 0.42, 0.72, 1.02, 1.28, 1.405].map(x => { const t = jTop(x), bt = jBot(x); const cut = 0.05 * Math.min(1, Math.max(0, (x - 0.3) / 0.25)); return { p: HL(x, (t + bt) / 2 - 0.01 - cut / 2, Math.max(0.03, jW(x) * 0.93 - 0.035 - 0.5 * cut) * s), r: [0.03, Math.max(0.035, (t - bt) / 2 * 0.92 - cut / 2)], b: 'jaw' }; }), { up: hup, k: K });
+    ell(HL(0.02, -0.40, 0.39 * s), [0.065, 0.07, 0.065], { bones: ['jaw'], up: hup, axis: hax, k: KB }); cap(HL(0.0, -0.42, 0.39 * s), HL(-0.1, -0.45, 0.38 * s), 0.045, 0.03, { bones: ['jaw'], up: hup, k: KB });   // joint and retroarticular process
+    custom((x, y, z) => { const q = toHL(x, y, z); return Math.max(sdPoly(q[0], q[1], [[0.27, -0.50], [0.30, -0.545], [0.44, -0.55], [0.47, -0.505]]) - 0.02, Math.abs(q[2] * s - 0.33) - 0.12) * HSC; }, HB[0], HB[1], { bones: ['jaw'], up: hup, axis: hax, carve: true, k: 0.014 });   // surangular window
   });
 }
 export const skelPrims = prims.splice(nBody);

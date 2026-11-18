@@ -106,8 +106,8 @@ class Grid {
   }
   field() { return new Float32Array(this.n).fill(1e3); }
   range(a, lo, hi) { let i0 = 0, i1 = a.length - 1; while (i0 < a.length - 1 && a[i0 + 1] < lo) i0++; while (i1 > 0 && a[i1 - 1] > hi) i1--; return [i0, i1]; }
-  splat(D, p, op) {
-    const M = 0.42 + p.k;
+  splat(D, p, op, margin = 0.42) {
+    const M = margin + p.k;
     const [i0, i1] = this.range(this.xs, p.lo[0] - M, p.hi[0] + M), [j0, j1] = this.range(this.ys, p.lo[1] - M, p.hi[1] + M), [k0, k1] = this.range(this.zs, p.lo[2] - M, p.hi[2] + M);
     const { xs, ys, zs, nx, ny } = this, ev = p.ev, kk = p.k;
     for (let k = k0; k <= k1; k++) for (let j = j0; j <= j1; j++) { let o = i0 + nx * (j + ny * k); for (let i = i0; i <= i1; i++, o++) { const d = ev(xs[i], ys[j], zs[k]); D[o] = op ? -smin(-D[o], d, kk) : smin(D[o], d, kk); } }
@@ -287,9 +287,9 @@ function attributes(M, G, D, list, isJaw) {
 // ---------------- skeleton (node tools/build-rex.mjs skel) ----------------
 // The bones as their own surface, rigidly carried by the same joints as the flesh. Each vertex follows the bone volume it belongs to.
 if (LOD === 'skel') {
-  const SP = skelPrims.map(compile), h = 0.0135, [lo, hi] = bounds(SP, 0.06);
+  const SP = skelPrims.map(compile), h = +(process.argv[3] || 0.0135), NAME = process.argv[4] || 'skeleton', [lo, hi] = bounds(SP, 0.06);
   const G = new Grid(axis(lo[0], hi[0], [], h, h), axis(Math.max(lo[1], 0), hi[1], [], h, h), symAxis(Math.max(-lo[2], hi[2]), 0, h, h));
-  const D = G.field(); for (const p of SP) if (!p.carve) G.splat(D, p); for (const p of SP) if (p.carve) G.splat(D, p, true); log('skeleton field', G.nx, G.ny, G.nz);
+  const D = G.field(); for (const p of SP) if (!p.carve) G.splat(D, p, false, 0.2); for (const p of SP) if (p.carve) G.splat(D, p, true, 0.02); log('skeleton field', G.nx, G.ny, G.nz);
   const M = finish(G, D, h), nV = M.nV, solid = SP.filter(p => !p.carve), si = new Uint8Array(nV * 4), sw = new Uint8Array(nV * 4), n8 = new Int8Array(nV * 4);
   for (let i = 0; i < nV; i++) {
     const x = M.pos[3 * i], y = M.pos[3 * i + 1], z = M.pos[3 * i + 2]; let best = 1e9, bp = null, bt = 0;
@@ -297,12 +297,14 @@ if (LOD === 'skel') {
     const w = primBones(bp, bp.tmax ? bt : (bp.L > 1e-6 ? bt : 0)).filter(q => q[1] > 0.004), tot = w.reduce((a, q) => a + q[1], 0); let acc = 0;
     w.forEach((q, c) => { si[4 * i + c] = q[0]; const v = c === w.length - 1 ? 255 - acc : Math.round(255 * q[1] / tot); sw[4 * i + c] = v; acc += v; });
     for (let c = 0; c < 3; c++) n8[4 * i + c] = Math.round(127 * M.nrm[3 * i + c]);
+    // openness: how far the field rises along the normal - low in the pits, between ribs, inside the skull
+    let ao = 0; for (const r of [0.02, 0.05, 0.12]) ao += Math.min(1, Math.max(0, G.sample(D, x + M.nrm[3 * i] * r, y + M.nrm[3 * i + 1] * r, z + M.nrm[3 * i + 2] * r) / r)); n8[4 * i + 3] = Math.round(127 * ao / 3);
   }
   const tri = Uint32Array.from(M.tri); for (let i = tri.length - 1; i > 0; i--) tri[i] = (tri[i] - tri[i - 1]) >>> 0;
   const parts = { position: Float32Array.from(M.pos), normal: n8, skinIndex: si, skinWeight: sw, index: tri }; let off = 0; const layout = {}, bufs = [];
   for (const [k, a] of Object.entries(parts)) { const pad = (4 - off % 4) % 4; if (pad) { bufs.push(Buffer.alloc(pad)); off += pad; } layout[k] = { offset: off, length: a.length }; bufs.push(Buffer.from(a.buffer, a.byteOffset, a.byteLength)); off += a.byteLength; }
-  const gz = zlib.gzipSync(Buffer.concat(bufs), { level: 9 }); fs.writeFileSync('assets/skeleton.bin.gz', gz);
-  fs.writeFileSync('assets/skeleton.json', JSON.stringify({ vertices: nV, triangles: tri.length / 3, gzBytes: gz.length, indexDelta: true, layout }));
+  const gz = zlib.gzipSync(Buffer.concat(bufs), { level: 9 }); fs.writeFileSync(`assets/${NAME}.bin.gz`, gz);
+  fs.writeFileSync(`assets/${NAME}.json`, JSON.stringify({ vertices: nV, triangles: tri.length / 3, gzBytes: gz.length, indexDelta: true, layout }));
   log('skeleton', nV, 'verts', tri.length / 3, 'tris', (gz.length / 1e6).toFixed(1) + 'MB gz'); process.exit(0);
 }
 

@@ -89,7 +89,7 @@ export class Rex {
   // view 0 skin, 1 muscle activation, 2 skin strain, 3 skeleton (flesh drawn as a faint shell)
   async setView(v) {
     this.uniforms.uView.value = v; const sk = v === 3;
-    if (sk && !this.bonesMesh) { if (!this._skel) this._skel = loadSkeleton(this); this.bonesMesh = await this._skel; }
+    if (sk && !this.bonesMesh) { if (!this._skel) this._skel = loadSkeleton(this, this.skelName || 'skeleton'); this.bonesMesh = await this._skel; }
     const on = this.uniforms.uView.value === 3;
     if (this.bonesMesh) this.bonesMesh.visible = on;
     const m = this.material; if (m.transparent !== on) { m.transparent = on; m.depthWrite = !on; m.side = on ? THREE.DoubleSide : THREE.FrontSide; m.needsUpdate = true; }

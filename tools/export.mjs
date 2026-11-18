@@ -5,6 +5,7 @@
 import { createRequire } from 'module'; import fs from 'fs'; import path from 'path';
 const require = createRequire('/opt/npm-tools/node_modules/'); const { chromium } = require('playwright');
 const [outDir, simT = 9, gaze = -0.3, speed = 1.3] = process.argv.slice(2);
+const SKEL = process.env.SKEL || '';   // SKEL=<asset name> also exports the skeleton (e.g. SKEL=skeleton-hi)
 fs.mkdirSync(outDir, { recursive: true });
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const types = { html: 'text/html', js: 'text/javascript', mjs: 'text/javascript', json: 'application/json', bin: 'application/octet-stream', png: 'image/png', css: 'text/css' };
@@ -13,7 +14,7 @@ const p = await b.newPage({ viewport: { width: 640, height: 360 } });
 p.on('console', m => { const t = m.text(); if (!/GPU stall|GL Driver Message/.test(t)) console.log('[console]', m.type(), t.slice(0, 600)); });
 p.on('pageerror', e => console.log('[pageerror]', e.message, (e.stack || '').split('\n').slice(0, 4).join(' | ')));
 await p.route('**/*', r => { const u = new URL(r.request().url()); const f = path.join(root, decodeURIComponent(u.pathname)); if (fs.existsSync(f) && fs.statSync(f).isFile()) r.fulfill({ body: fs.readFileSync(f), contentType: types[f.split('.').pop()] || 'application/octet-stream' }); else r.fulfill({ status: 404, body: 'nf' }); });
-await p.goto(`http://rex.local/index.html?shot=1&q=high&ui=0&t=0&speed=${speed}`);
+await p.goto(`http://rex.local/index.html?shot=1&q=high&ui=0&t=0&speed=${speed}` + (SKEL ? `&view=3&skel=${SKEL}` : ''));
 await p.waitForFunction('window.__ready===true', null, { timeout: 240000 });
 
 const scene = await p.evaluate(([simT, gaze]) => {
@@ -55,9 +56,16 @@ const scene = await p.evaluate(([simT, gaze]) => {
   }
   const out = { units: 'metres, three.js axes (x, y up, z)', maxSkinTravel: maxD, body: { n: nV, pos: put('body_pos', pos), rest: put('body_rest', new Float32Array(P)), uv: put('body_uv', uv), strain: put('body_strain', strain), misc: put('body_misc', misc), index: put('body_index', new Uint32Array(g.index.array)) } };
 
+  // ---- skeleton (when loaded): each vertex rigidly follows its bones ----
+  if (rex.bonesMesh) { const sg = rex.bonesMesh.geometry, sp = sg.attributes.position.array, si = sg.attributes.skinIndex.array, sw = sg.attributes.skinWeight.array, n = sp.length / 3, wp = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { const px = sp[3 * i], py = sp[3 * i + 1], pz = sp[3 * i + 2]; let x = 0, y = 0, z = 0;
+      for (let c = 0; c < 4; c++) { const w = sw[4 * i + c] / 255; if (w <= 0) continue; const o = 12 * si[4 * i + c]; x += w * (bm[o] * px + bm[o + 1] * py + bm[o + 2] * pz + bm[o + 9]); y += w * (bm[o + 3] * px + bm[o + 4] * py + bm[o + 5] * pz + bm[o + 10]); z += w * (bm[o + 6] * px + bm[o + 7] * py + bm[o + 8] * pz + bm[o + 11]); }
+      wp[3 * i] = x; wp[3 * i + 1] = y; wp[3 * i + 2] = z; }
+    out.skeleton = { n, pos: put('skel_pos', wp), rest: put('skel_rest', new Float32Array(sp)), open: put('skel_open', new Uint8Array(sg.attributes.aOpen.array)), index: put('skel_index', new Uint32Array(sg.index.array)) }; }
+
   // ---- rigid parts: teeth, gullet; eyes as centre + axes ----
   const v = new rex.mesh.position.constructor(); out.rigid = [];
-  rex.group.traverse(o => { if (!o.isMesh || o === rex.mesh || !o.visible || rex.eyes.includes(o)) return; const ga = o.geometry, pa = ga.attributes.position, n = pa.count, wp = new Float32Array(n * 3);
+  rex.group.traverse(o => { if (!o.isMesh || o === rex.mesh || o === rex.bonesMesh || !o.geometry.index || rex.eyes.includes(o) || rex.eyes.some(e => e.userData.lid === o)) return; const ga = o.geometry, pa = ga.attributes.position, n = pa.count, wp = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) { v.fromBufferAttribute(pa, i).applyMatrix4(o.matrixWorld); wp[3 * i] = v.x; wp[3 * i + 1] = v.y; wp[3 * i + 2] = v.z; }
     const k = out.rigid.length, kind = ga.attributes.color ? 'teeth' : 'gullet', e = { kind, n, pos: put(`rigid${k}_pos`, wp), index: put(`rigid${k}_index`, new Uint32Array(ga.index.array)) };
     if (ga.attributes.color) e.color = put(`rigid${k}_color`, new Float32Array(ga.attributes.color.array)); out.rigid.push(e); });

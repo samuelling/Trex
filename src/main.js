@@ -122,6 +122,7 @@ bind('aDof', v => v.toFixed(1), v => { if (dof) dof.aperture = v; });
 $('aSun').value = world.elev; $('aSunO').textContent = world.elev + '°'; $('aAz').value = world.az; $('aAzO').textContent = world.az + '°';
 $('aQ').onchange = e => { localStorage.setItem('rexQ', e.target.value); const u = new URL(location.href); u.searchParams.delete('q'); location.href = u; };
 if (forces.visible) $('bForce').classList.add('on');
+if (Q.has('skel')) rex.skelName = Q.get('skel');
 if (Q.has('view')) { state.view = +Q.get('view'); await rex.setView(state.view); $('bView').textContent = 'View: ' + VIEWS[state.view]; }
 if (Q.get('ui') === '0') { $('hud').style.display = $('ctl').style.display = $('load').style.display = 'none'; }
 if (Q.has('mus')) body.musGain = +Q.get('mus'); if (Q.has('flesh')) body.fleshGain = +Q.get('flesh');
