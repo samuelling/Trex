@@ -5,8 +5,12 @@
 // projected triplanar in rest space, and wrinkles that deepen where the skin sheet is compressed.
 
 export const VERT_PARS = /* glsl */`
-attribute vec2 aUv;
-attribute vec4 aMusIndex; attribute vec4 aMusWeight; attribute vec4 aMusGradA; attribute vec4 aMusGradB;
+// REX_HAIR: the same deformation for strands rooted in the skin (src/nipples.js), minus the inputs only shading needs (16-attribute limit)
+#ifndef REX_HAIR
+attribute vec2 aUv; attribute vec4 aMusGradA; attribute vec4 aMusGradB;
+#endif
+attribute vec4 aMusIndex; attribute vec4 aMusWeight;
+attribute vec4 aNip; uniform float uNip; varying vec4 vNip; varying float vNipQ;
 attribute vec4 aNodeIndex; attribute vec4 aMisc; attribute vec4 aMisc2; attribute vec4 aBindIndex; attribute vec4 aBindWeight;
 uniform float uMus[32]; uniform float uAct[32]; uniform sampler2D uNodeTex; uniform sampler2D uSkinTex; uniform sampler2D uSkinRest; uniform float uBreath;
 varying vec3 vRest; varying vec3 vRestN; varying vec2 vTex; varying vec3 vRot0; varying vec3 vRot1; varying vec3 vRot2; varying vec3 vDef; varying float vAct; varying float vStrain; varying float vSlide;
@@ -24,13 +28,22 @@ vec3 nodeField(vec3 x, float s) {
 ivec2 skinTc(float idx) { int i = int(idx + 0.5); return ivec2(i & 127, i >> 7); }`;
 
 export const VERT_MAIN = /* glsl */`
-vRest = position; vRestN = normal; vTex = aUv; vStrain = 0.0; vSlide = 0.0;
+vRest = position; vRestN = normal; vStrain = 0.0; vSlide = 0.0;
+#ifndef REX_HAIR
+vTex = aUv;
+#endif
 {
   vec3 t1 = normalize(cross(normal, abs(normal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0))), t2 = cross(normal, t1);
   float b = 0.0, g1 = 0.0, g2 = 0.0, act = 0.0;
-  for (int i = 0; i < 4; i++) { int m = int(aMusIndex[i] + 0.5); float B = uMus[m]; b += aMusWeight[i] * B; g1 += aMusGradA[i] * B; g2 += aMusGradB[i] * B; act += aMusWeight[i] * uAct[m]; }
+  for (int i = 0; i < 4; i++) { int m = int(aMusIndex[i] + 0.5); float B = uMus[m]; b += aMusWeight[i] * B; act += aMusWeight[i] * uAct[m];
+  #ifndef REX_HAIR
+    g1 += aMusGradA[i] * B; g2 += aMusGradB[i] * B;
+  #endif
+  }
   float br = uBreath * aMisc.w * smoothstep(0.2, 1.0, position.x) * (1.0 - smoothstep(2.2, 3.0, position.x));
   rexDisp = normal * (0.3 * b + br);
+  vNip = aNip; vNipQ = aNip.w * aNip.w;
+  if (uNip > 0.5) { float sz = 0.8 + 0.45 * aNip.w, rn = length(aNip.xyz) / sz; rexDisp += normal * sz * (0.017 * (1.0 - smoothstep(0.0, 0.03, rn)) + 0.005 * (1.0 - smoothstep(0.04, 0.062, rn))); }   // nub on a slightly puffed areola
   vec3 dT1 = normal * (g1 * 5.0), dT2 = normal * (g2 * 5.0);          // derivative of the displacement along each tangent
   mat3 r = mat3(1.0);
   #ifdef USE_SKINNING
@@ -55,7 +68,7 @@ vRest = position; vRestN = normal; vTex = aUv; vStrain = 0.0; vSlide = 0.0;
 }`;
 
 export const FRAG_PARS = /* glsl */`
-varying vec3 vRest; varying vec3 vRestN; varying vec2 vTex; varying vec3 vRot0; varying vec3 vRot1; varying vec3 vRot2; varying vec3 vDef; varying float vAct; varying float vStrain; varying float vSlide;
+varying vec3 vRest; varying vec3 vRestN; varying vec2 vTex; varying vec3 vRot0; varying vec3 vRot1; varying vec3 vRot2; varying vec3 vDef; varying float vAct; varying float vStrain; varying float vSlide; varying vec4 vNip; varying float vNipQ; uniform float uNip; float rexNipH;
 uniform sampler2D tAlbedo; uniform sampler2D tNormal; uniform sampler2D tORM; uniform sampler2D tDetail;
 uniform int uView; uniform float uDetail; uniform float uWrinkle;
 float rexRough, rexAO, rexFold, rexComp; vec3 rexN;
@@ -79,6 +92,26 @@ vec3 rexSkin() {
   alb *= mix(1.0, 0.72 + 0.4 * dh, 0.7 * skin * uDetail);
   rexRough = clamp(orm.g + (0.5 - dh) * 0.16 * skin + 0.1 * rexComp, 0.05, 1.0);
   rexAO = orm.r * (1.0 - 0.3 * rexComp * (1.0 - orm.b));
+  rexNipH = 0.0;
+  if (uNip > 0.5) {   // areola, nub, tubercles and the hairs lying against the skin, in the frame of the nearest site
+    float sz = 0.8 + 0.45 * vNip.w, r = length(vNip.xyz) / sz;
+    if (r < 0.11 && vNipQ - vNip.w * vNip.w < 2e-5) {   // (corners belonging to different sites would blend their offsets through zero: the variance of the site number exposes that)
+      vec3 a1 = normalize(cross(n0, abs(n0.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0))), a2 = cross(n0, a1); float th = atan(dot(vNip.xyz, a2), dot(vNip.xyz, a1)), seed = vNip.w * 57.0;
+      float wob = 1.0 + 0.10 * sin(th * 3.0 + seed) + 0.05 * sin(th * 7.0 + seed * 2.3);
+      float are = (1.0 - smoothstep(0.049 * wob, 0.058 * wob, r)) * skin, nub = 1.0 - smoothstep(0.011, 0.026, r), tip = 1.0 - smoothstep(0.0, 0.013, r);
+      float ka = floor(th * 9.0 / 6.2832 + 0.5), ta = ka * 6.2832 / 9.0, tr = 0.034 + 0.01 * fract(sin(ka * 12.9 + seed) * 43758.5);
+      float tub = (1.0 - smoothstep(0.0, 0.0065, length(vec2(r * cos(th - ta) - tr, r * sin(th - ta))))) * are;
+      vec3 areC = mix(vec3(0.30, 0.145, 0.115), vec3(0.19, 0.095, 0.08), fract(seed * 0.37)) * (0.82 + 0.36 * dh);
+      alb = mix(alb, alb * vec3(1.16, 0.9, 0.88), (1.0 - smoothstep(0.055, 0.09, r)) * 0.5 * skin);          // flushed skin around it
+      alb = mix(alb, areC, are * 0.93); alb = mix(alb, areC * vec3(1.22, 0.95, 0.98), nub * are * 0.85); alb = mix(alb, areC * 1.25, tub * 0.5);
+      alb *= 1.0 - 0.35 * (smoothstep(0.02, 0.027, r) - smoothstep(0.027, 0.034, r)) * are;               // crease at the base of the nub
+      rexRough = mix(rexRough, 0.46, are * 0.7); rexNipH = sz * (0.011 * nub * are + 0.004 * tip * are + 0.003 * are + 0.0022 * tub);
+      float slot = th * 24.0 / 6.2832, hk = floor(slot), h1 = fract(sin(hk * 91.7 + seed) * 43758.5), h2 = fract(sin(hk * 37.3 + seed * 1.7) * 24634.6);
+      float lenH = 0.015 + 0.035 * h2, start = 0.042 + 0.012 * h1, across = (fract(slot) - 0.5 - (h1 - 0.5) * 9.0 * (r - start)) * 6.2832 * r / 24.0;
+      float hairM = (1.0 - smoothstep(0.0009, 0.0021, abs(across) * sz)) * step(start, r) * (1.0 - smoothstep(start + lenH * 0.7, start + lenH, r)) * step(0.35, h1) * skin * (1.0 - smoothstep(0.09, 0.105, r));
+      alb = mix(alb, vec3(0.03, 0.02, 0.015), hairM * 0.85);
+    }
+  }
   if (uView == 1) { float a = clamp(vAct, 0.0, 1.0); vec3 heat = mix(vec3(0.16, 0.2, 0.3), vec3(0.95, 0.12, 0.04), smoothstep(0.02, 0.75, a)); alb = mix(heat, vec3(1.0, 0.85, 0.3), smoothstep(0.7, 1.0, a)) * (0.6 + 0.5 * dh); rexRough = 0.6; }
   if (uView == 2) { float t = clamp(vStrain * 12.0, -1.0, 1.0); alb = mix(vec3(0.2, 0.22, 0.24), t > 0.0 ? vec3(0.95, 0.25, 0.1) : vec3(0.1, 0.5, 1.0), abs(t)) * (0.6 + 0.5 * dh) + vec3(0.0, 0.5, 0.2) * clamp(vSlide * 25.0, 0.0, 1.0); rexRough = 0.6; }
   return alb;

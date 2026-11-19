@@ -106,6 +106,8 @@ $('bRoar').onclick = () => { body.roar(); sound.roar(); };
 $('bTurn').onclick = () => { loco.turnAround(); };
 $('bFeed').onclick = () => { body.feed(); };
 body.onFeed = (what, pos, yaw) => { if (what === 'carcass') world.showCarcass(pos, yaw); };
+$('aNip').onchange = () => { const n = rex.setNipples($('aNip').checked); $('aNipO').textContent = $('aNip').checked ? `on · ${n.sites} nipples, ${n.strands} hairs` : 'off'; };
+if (Q.has('nips')) { $('aNip').checked = true; $('aNip').onchange(); }
 $('aAir').onchange = () => { loco.aerial = $('aAir').checked; $('aAirO').textContent = loco.aerial ? 'on · speeds to 12 m/s' : 'off · what-if beyond the bone-stress limit'; spd.max = loco.aerial ? 12 : 7.5; if (+spd.value > +spd.max) { spd.value = spd.max; } spd.oninput(); };
 $('bSound').onclick = () => { const on = sound.toggle(); $('bSound').classList.toggle('on', on); };
 $('bAdv').onclick = () => { $('adv').classList.toggle('open'); $('bAdv').classList.toggle('on'); };
@@ -126,7 +128,7 @@ if (Q.has('skel')) rex.skelName = Q.get('skel');
 if (Q.has('view')) { state.view = +Q.get('view'); await rex.setView(state.view); $('bView').textContent = 'View: ' + VIEWS[state.view]; }
 if (Q.get('ui') === '0') { $('hud').style.display = $('ctl').style.display = $('load').style.display = 'none'; }
 if (Q.has('mus')) body.musGain = +Q.get('mus'); if (Q.has('flesh')) body.fleshGain = +Q.get('flesh');
-addEventListener('keydown', e => { if (e.key === 'c') setCam(camI + 1); if (e.key === 'r') $('bRoar').click(); if (e.key === 't') $('bTurn').click(); if (e.key === 'f') $('bFeed').click(); if (e.key === ' ') $('bSlow').click(); if (e.key === 'ArrowUp') { spd.value = +spd.value + 0.25; spd.oninput(); } if (e.key === 'ArrowDown') { spd.value = +spd.value - 0.25; spd.oninput(); } });
+addEventListener('keydown', e => { if (e.key === 'c') setCam(camI + 1); if (e.key === 'r') $('bRoar').click(); if (e.key === 'n') { $('aNip').checked = !$('aNip').checked; $('aNip').onchange(); } if (e.key === 't') $('bTurn').click(); if (e.key === 'f') $('bFeed').click(); if (e.key === ' ') $('bSlow').click(); if (e.key === 'ArrowUp') { spd.value = +spd.value + 0.25; spd.oninput(); } if (e.key === 'ArrowDown') { spd.value = +spd.value - 0.25; spd.oninput(); } });
 
 const BAR = [['caudofemoralis', 'cfl'], ['knee extensors', 'kneeExt'], ['hamstrings', 'hamstring'], ['hip flexors', 'hipFlex'], ['gastrocnemius', 'gastroc'], ['tibialis cran.', 'tibCran']];
 $('bars').innerHTML = '<span></span><span style="text-align:center">L</span><span style="text-align:center">R</span>' + BAR.map(([n, k]) => `<span>${n}</span><div class="bar"><i id="m_${k}_L"></i></div><div class="bar"><i id="m_${k}_R"></i></div>`).join('');

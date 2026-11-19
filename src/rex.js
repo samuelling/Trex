@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { VERT_PARS, VERT_MAIN, FRAG_PARS } from './skinShader.js';
 import { SkinLayer } from './skin.js';
 import { loadSkeleton } from './skeleton.js';
+import { buildNipples } from './nipples.js';
 
 const V = (a) => new THREE.Vector3(a[0], a[1], a[2]);
 
@@ -19,7 +20,7 @@ export class Rex {
     const tl = new THREE.TextureLoader(), aniso = 8;
     const T = async (file, srgb, repeat) => { const t = await tl.loadAsync('assets/' + file); t.flipY = false; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = aniso; t.wrapS = t.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; return t; };
     const [albedo, normal, orm, detail] = await Promise.all([T(`rex-${lod}-albedo.webp`, true), T(`rex-${lod}-normal.webp`), T(`rex-${lod}-orm.webp`), T('skin-detail.webp', false, true)]);
-    return new Rex(meta, buf, { albedo, normal, orm, detail });
+    const rex = new Rex(meta, buf, { albedo, normal, orm, detail }); rex.lod = lod; return rex;
   }
 
   constructor(meta, buf, tex) {
@@ -59,7 +60,7 @@ export class Rex {
     this.nodeTex = new THREE.DataTexture(this.nodeData, 256, 2, THREE.RGBAFormat, THREE.FloatType);
     this.nodeTex.magFilter = this.nodeTex.minFilter = THREE.NearestFilter; this.nodeTex.needsUpdate = true;
     this.skin = new SkinLayer(this, buf);
-    this.uniforms = { uMus: { value: this.uMus }, uAct: { value: this.uAct }, uNodeTex: { value: this.nodeTex }, uSkinTex: { value: this.skin.tex }, uSkinRest: { value: this.skin.restTex }, uBreath: { value: 0 }, uView: { value: 0 }, uDetail: { value: 1 }, uWrinkle: { value: 1 },
+    this.uniforms = { uMus: { value: this.uMus }, uAct: { value: this.uAct }, uNodeTex: { value: this.nodeTex }, uSkinTex: { value: this.skin.tex }, uSkinRest: { value: this.skin.restTex }, uBreath: { value: 0 }, uView: { value: 0 }, uDetail: { value: 1 }, uWrinkle: { value: 1 }, uNip: { value: 0 },
       tAlbedo: { value: tex.albedo }, tNormal: { value: tex.normal }, tORM: { value: tex.orm }, tDetail: { value: tex.detail } };
 
     const mat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0, sheen: 0.1, sheenRoughness: 0.75, sheenColor: new THREE.Color(0.35, 0.3, 0.22) });
@@ -74,7 +75,7 @@ export class Rex {
         .replace('#include <common>', '#include <common>\n' + FRAG_PARS)
         .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = rexSkin();')
         .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = rexRough;')
-        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(rexN, 0.0)).xyz); normal = rexPerturb(normal, -vViewPosition, (rexFold - 0.5) * 0.03 * rexComp);')
+        .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(rexN, 0.0)).xyz); normal = rexPerturb(normal, -vViewPosition, (rexFold - 0.5) * 0.03 * rexComp + rexNipH);')
         .replace('#include <opaque_fragment>', '#include <opaque_fragment>\nif (uView == 3) { float fr = pow(1.0 - abs(dot(normalize(vViewPosition), normal)), 2.2); gl_FragColor = vec4(vec3(0.55, 0.72, 1.0) * (0.25 + 0.9 * fr), 0.035 + 0.3 * fr); }')
         .replace('#include <aomap_fragment>', '#include <aomap_fragment>\nreflectedLight.indirectDiffuse *= rexAO; reflectedLight.indirectSpecular *= rexAO * rexAO; reflectedLight.directDiffuse *= mix(1.0, rexAO, 0.35);');
     };
@@ -86,6 +87,12 @@ export class Rex {
     this.#buildEyes(); this.#buildTeeth(); this.#buildGullet();
   }
 
+  // the weird option: hairy nipples all over (built the first time it is switched on)
+  setNipples(on) {
+    if (on && !this.nipples) this.nipples = buildNipples(this, { strands: this.lod === 'hi' ? 11 : 5 });
+    this.nipOn = !!on; this.uniforms.uNip.value = on && this.uniforms.uView.value !== 3 ? 1 : 0; if (this.nipples) this.nipples.hair.visible = this.nipOn && this.uniforms.uView.value !== 3;
+    return this.nipples;
+  }
   // view 0 skin, 1 muscle activation, 2 skin strain, 3 skeleton (flesh drawn as a faint shell)
   async setView(v) {
     this.uniforms.uView.value = v; const sk = v === 3;
@@ -95,6 +102,7 @@ export class Rex {
     const m = this.material; if (m.transparent !== on) { m.transparent = on; m.depthWrite = !on; m.side = on ? THREE.DoubleSide : THREE.FrontSide; m.needsUpdate = true; }
     this.mesh.castShadow = !on; this.mesh.renderOrder = on ? 5 : 0;
     for (const e of this.eyes) e.visible = !on; if (this.gullet) this.gullet.visible = !on;
+    if (this.nipOn !== undefined) this.setNipples(this.nipOn);
   }
   bone(n) { return this.byName[n]; }
   // world position of a rest-space point rigidly attached to bone b

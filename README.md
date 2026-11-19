@@ -30,6 +30,8 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 
 **Skeleton.** The *Skeleton* view strips the animal to its bones, carried by the same joints and the same simulation, with the flesh as a faint outline. The skull is a shell of bone on the living head's outline with its windows cut to their real shapes (keyhole orbit, antorbital and maxillary fenestrae, naris, waisted lateral temporal fenestra, supratemporal fenestrae) and its margins at the tooth sockets, so the crowns that the lips cover in life are exposed. Behind it: atlas–axis and eight cervicals with backswept ribs, 13 dorsals with double-headed ribs, five fused sacrals between long low ilia, 40 caudals with chevrons, gastralia, furcula, a pubis ending in its boot, femora with inturned heads and fourth trochanters, tibiae with cnemial crests, a pinched middle metatarsal, toes of 3, 4 and 5 phalanges, and two-fingered hands. The surface is shaded as prepared fossil bone — mineral-stained, worn pale where exposed, dark in the recesses, finely cracked.
 
+**Hairy nipples.** An option under Advanced (key `n`, or `?nips=1`) studs the entire hide with several hundred hairy nipples, for no scientific reason whatsoever. Sites are scattered evenly over the skin; each body vertex stores the vector from its nearest site, so the skin shader raises a nub on a puffed areola and paints the tubercles with no lookups, and the hairs are real strands rooted on body vertices that carry the same deformation data — so every nipple stretches, sags and wobbles with the muscle and simulated skin under it.
+
 **Skin.** The hide is its own simulated layer rather than paint on the muscle. A 10,900-vertex sheet covers the body and is solved every frame with position-based dynamics: each point is tied to the fascia underneath by a spring whose stiffness depends on how loose the skin is there (tight over the skull, shins and limb folds; loose on the throat, belly and flanks), it can lift off but not sink in, its edges resist stretch but go slack in compression, and gravity acts on it. So the skin lags and slides over the moving muscle, the dewlap and belly hang and sway, and where the sheet is compressed — inside of a bending neck, behind the thigh — the shader raises wrinkles from the measured strain, while stretched skin smooths out.
 
 **Surface detail.** `tools/build-rex.mjs` unwraps the body into a texture atlas and bakes 4K maps (2K on the light tier) from a procedural 3D skin field: fine pebbly scales (kept small, after the 1–2.5 mm scales of the known skin patches; Bell et al. 2017), wrinkle networks that follow the direction each joint folds, scutes on the feet, scars, mud, countershaded colour. Folds deeper than a few millimetres are pushed into the geometry itself; finer relief is a normal map, baked in the rest pose and rotated per pixel with the skin as it deforms. A tiling micro-detail layer keeps scales crisp in close-up.
@@ -47,9 +49,9 @@ A real-time, physically grounded rendering of an adult *Tyrannosaurus rex* (FMNH
 | Strike & feed | Stop, strike at a carcass, tear, toss and swallow. |
 | Forces | Ground reaction force vectors, centre of mass and its trajectory. |
 | ¼× time | Slow motion. |
-| Advanced | Muscle definition, soft-tissue wobble, allow aerial run, skin looseness, tail natural frequency, depth of field, sun position, quality. |
+| Advanced | Muscle definition, soft-tissue wobble, hairy nipples, allow aerial run, skin looseness, tail natural frequency, depth of field, sun position, quality. |
 
-Keys: `c` camera, `space` slow motion, `r` roar, `t` turn round, `f` strike and feed, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low&dof=1&sun=19&az=20`.
+Keys: `c` camera, `space` slow motion, `r` roar, `t` turn round, `f` strike and feed, `n` nipples, `↑/↓` speed. URL parameters: `?speed=3&cam=side&view=1&forces=1&q=high|med|low&dof=1&sun=19&az=20`.
 
 Quality tiers: **high** loads the 386k-triangle mesh with 4K textures (about 20 MB) and is meant for a desktop GPU; **medium** and **low** use a 180k-triangle mesh with 2K textures (about 8 MB); low also drops depth of field and bloom. Phones start on low.
 
@@ -76,6 +78,7 @@ src/skin.js          simulated skin sheet (slide, sag, strain)
 src/terrain.js       ground relief shared by the renderer and the gait
 src/dof.js           depth-of-field pass
 src/skeleton.js      loader for the skeleton view
+src/nipples.js       the nipple option: site scattering and rooted hair strands
 src/tail.js          elastic-beam tail
 src/rex.js           mesh, skeleton, eyes, teeth
 src/skinShader.js    integument + deformation shader
