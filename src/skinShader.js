@@ -43,7 +43,7 @@ vTex = aUv;
   float br = uBreath * aMisc.w * smoothstep(0.2, 1.0, position.x) * (1.0 - smoothstep(2.2, 3.0, position.x));
   rexDisp = normal * (0.3 * b + br);
   vNip = aNip; vNipQ = aNip.w * aNip.w;
-  if (uNip > 0.5) { float sz = 0.8 + 0.45 * aNip.w, rn = length(aNip.xyz) / sz; rexDisp += normal * sz * (0.017 * (1.0 - smoothstep(0.0, 0.03, rn)) + 0.005 * (1.0 - smoothstep(0.04, 0.062, rn))); }   // nub on a slightly puffed areola
+  if (uNip > 0.5) { float sz = 0.6 + 0.9 * aNip.w, rn = length(aNip.xyz) / sz; rexDisp += normal * sz * (0.017 * (1.0 - smoothstep(0.0, 0.03, rn)) + 0.005 * (1.0 - smoothstep(0.04, 0.062, rn))); }   // nub on a slightly puffed areola
   vec3 dT1 = normal * (g1 * 5.0), dT2 = normal * (g2 * 5.0);          // derivative of the displacement along each tangent
   mat3 r = mat3(1.0);
   #ifdef USE_SKINNING
@@ -94,7 +94,7 @@ vec3 rexSkin() {
   rexAO = orm.r * (1.0 - 0.3 * rexComp * (1.0 - orm.b));
   rexNipH = 0.0;
   if (uNip > 0.5) {   // areola, nub, tubercles and the hairs lying against the skin, in the frame of the nearest site
-    float sz = 0.8 + 0.45 * vNip.w, r = length(vNip.xyz) / sz;
+    float sz = 0.6 + 0.9 * vNip.w, r = length(vNip.xyz) / sz;
     if (r < 0.11 && vNipQ - vNip.w * vNip.w < 2e-5) {   // (corners belonging to different sites would blend their offsets through zero: the variance of the site number exposes that)
       vec3 a1 = normalize(cross(n0, abs(n0.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0))), a2 = cross(n0, a1); float th = atan(dot(vNip.xyz, a2), dot(vNip.xyz, a1)), seed = vNip.w * 57.0;
       float wob = 1.0 + 0.10 * sin(th * 3.0 + seed) + 0.05 * sin(th * 7.0 + seed * 2.3);

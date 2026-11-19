@@ -8,16 +8,33 @@ import { VERT_PARS, VERT_MAIN } from './skinShader.js';
 
 function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-export function buildNipples(rex, { spacing = 0.22, strands = 11 } = {}) {
+// Uneven on purpose: a smooth random density field over the body decides where they crowd, where they thin out and where there
+// are none. Spacing shrinks where the field is high (clusters of small ones) and grows where it is low (big loners), and below a
+// threshold the hide is bare. Size follows crowding: each site's random number is drawn from a band set by the local density.
+const fr = (x) => x - Math.floor(x), h3 = (i, j, k, s) => fr(Math.sin(i * 127.1 + j * 311.7 + k * 74.7 + s * 19.3) * 43758.5453);
+function vnoise(x, y, z, s) { const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z), u = x - i, v = y - j, w = z - k, a = u * u * (3 - 2 * u), b = v * v * (3 - 2 * v), c = w * w * (3 - 2 * w), L = (p, q, t) => p + (q - p) * t;
+  return L(L(L(h3(i, j, k, s), h3(i + 1, j, k, s), a), L(h3(i, j + 1, k, s), h3(i + 1, j + 1, k, s), a), b), L(L(h3(i, j, k + 1, s), h3(i + 1, j, k + 1, s), a), L(h3(i, j + 1, k + 1, s), h3(i + 1, j + 1, k + 1, s), a), b), c); }
+const density = (x, y, z, seed) => 0.68 * vnoise(x * 0.75, y * 0.75, z * 0.75, seed) + 0.32 * vnoise(x * 2.1 + 5, y * 2.1, z * 2.1, seed + 1);
+const sst = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+export const nipSize = (w) => 0.6 + 0.9 * w;   // must match the shader
+
+export function buildNipples(rex, { strands = 11, seed = 7 } = {}) {
   const g = rex.mesh.geometry, A = g.attributes, P = A.position.array, N8 = A.normal.array, MS = A.aMisc.array, nV = A.position.count, rnd = rng(1234);
+  const RMIN = 0.1, RMAX = 0.62, spacing = RMAX;
+  // a handful of colonies: tight swarms around random spots of plain skin, on top of the general patchiness
+  const colonies = []; for (let t = 0; t < 400 && colonies.length < 9; t++) { const i = Math.floor(rnd() * nV); if (MS[4 * i] !== 0) continue; colonies.push([P[3 * i], P[3 * i + 1], P[3 * i + 2], 0.28 + 0.3 * rnd()]); }
+  const dens = (x, y, z) => { let d = sst(0.36, 0.78, density(x, y, z, seed)); for (const c of colonies) d = Math.max(d, 1 - sst(c[3] * 0.55, c[3], Math.hypot(x - c[0], y - c[1], z - c[2]))); return d; };
   const nrm = (i, o) => { const x = N8[4 * i], y = N8[4 * i + 1], z = N8[4 * i + 2], l = 1 / (Math.hypot(x, y, z) || 1); o[0] = x * l; o[1] = y * l; o[2] = z * l; return o; };
   // ---- sites: vertices of plain skin, no two closer than `spacing` ----
   const key = (x, y, z, h) => (Math.floor(x / h) + 512) + (Math.floor(y / h) + 512) * 1024 + (Math.floor(z / h) + 512) * 1048576;
   const order = new Uint32Array(nV); for (let i = 0; i < nV; i++) order[i] = i; for (let i = nV - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
-  const cells = new Map(), sites = [], d2 = spacing * spacing;
-  for (let q = 0; q < nV; q++) { const i = order[q]; if (MS[4 * i] !== 0) continue; const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2]; let ok = true;
-    for (let a = -1; a <= 1 && ok; a++) for (let b = -1; b <= 1 && ok; b++) for (let c = -1; c <= 1 && ok; c++) { const L = cells.get(key(x + a * spacing, y + b * spacing, z + c * spacing, spacing)); if (L) for (const s of L) { const S = sites[s]; if ((S.x - x) ** 2 + (S.y - y) ** 2 + (S.z - z) ** 2 < d2) { ok = false; break; } } }
-    if (!ok) continue; const k = key(x, y, z, spacing); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(sites.length); const n = nrm(i, [0, 0, 0]); sites.push({ x, y, z, n, v: i, rand: rnd() }); }
+  const cells = new Map(), sites = [];
+  for (let q = 0; q < nV; q++) { const i = order[q]; if (MS[4 * i] !== 0) continue; const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2], d = dens(x, y, z); if (d <= 0) continue;          // bare skin
+    const r = RMAX + (RMIN - RMAX) * Math.pow(d, 0.55); let ok = true;
+    for (let a = -1; a <= 1 && ok; a++) for (let b = -1; b <= 1 && ok; b++) for (let c = -1; c <= 1 && ok; c++) { const L = cells.get(key(x + a * spacing, y + b * spacing, z + c * spacing, spacing)); if (L) for (const s of L) { const S = sites[s], m = Math.max(r, S.r); if ((S.x - x) ** 2 + (S.y - y) ** 2 + (S.z - z) ** 2 < m * m) { ok = false; break; } } }
+    if (!ok) continue; const k = key(x, y, z, spacing); if (!cells.has(k)) cells.set(k, []); cells.get(k).push(sites.length); const n = nrm(i, [0, 0, 0]);
+    const lo = 0.55 * (1 - d), w = Math.min(0.999, lo + (0.45 + 0.1 * (1 - d)) * rnd());                                              // crowded -> small, isolated -> big
+    sites.push({ x, y, z, n, v: i, r, rand: w }); }
   // ---- per vertex: offset from the nearest site that faces the same way, and that site's random number ----
   const nip = new Float32Array(nV * 4), tn = [0, 0, 0];
   for (let i = 0; i < nV; i++) { const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2]; nrm(i, tn); let best = 1e9, bs = null;
@@ -31,8 +48,8 @@ export function buildNipples(rex, { spacing = 0.22, strands = 11 } = {}) {
   const nearestVert = (x, y, z) => { let best = 1e9, bi = -1; for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) { const L = vcell.get(key(x + a * vh, y + b * vh, z + c * vh, vh)); if (L) for (const i of L) { const dd = (P[3 * i] - x) ** 2 + (P[3 * i + 1] - y) ** 2 + (P[3 * i + 2] - z) ** 2; if (dd < best) { best = dd; bi = i; } } } return bi; };
   const SEG = 5, SIDES = 3, perStrand = (SEG + 1) * SIDES, maxS = sites.length * strands, anchor = new Uint32Array(maxS * perStrand), off = new Float32Array(maxS * perStrand * 4), hn = new Float32Array(maxS * perStrand * 4), idx = [];
   const t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), n = new THREE.Vector3(), rad = new THREE.Vector3(), tanv = new THREE.Vector3(), p = new THREE.Vector3(), prev = new THREE.Vector3(), dir = new THREE.Vector3(), s1 = new THREE.Vector3(), s2 = new THREE.Vector3(), o = new THREE.Vector3(); let ns = 0;
-  for (const S of sites) { const sz = 0.8 + 0.45 * S.rand; n.fromArray(S.n); t1.crossVectors(n, Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize(); t2.crossVectors(n, t1);
-    const count = Math.round(strands * (0.6 + 0.8 * rnd()));
+  for (const S of sites) { const sz = nipSize(S.rand); n.fromArray(S.n); t1.crossVectors(n, Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize(); t2.crossVectors(n, t1);
+    const count = Math.round(strands * (0.5 + 0.8 * rnd()) * sz);
     for (let k = 0; k < count && ns < maxS; k++) { const ph = rnd() * Math.PI * 2, rr = (0.036 + 0.03 * rnd()) * sz; rad.copy(t1).multiplyScalar(Math.cos(ph)).addScaledVector(t2, Math.sin(ph));
       const vi = nearestVert(S.x + rad.x * rr, S.y + rad.y * rr, S.z + rad.z * rr); if (vi < 0) continue; nrm(vi, tn); n.fromArray(tn);
       // each hair leaves the skin at an angle, arcs outward, and curls to one side: wiry, not groomed
